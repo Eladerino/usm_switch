@@ -900,6 +900,19 @@ extern volatile long lifted_hits[];
 ''' % (', '.join('c->%s = %s' % (r, r) for r in R32), ', '.join('%s = c->%s' % (r, r) for r in R32))
 
 
+def write_if_changed(path, content):
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                if f.read() == content:
+                    return False
+        except Exception:
+            pass
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    return True
+
+
 def main():
     out = sys.argv[1]
     which = sys.argv[2] if len(sys.argv) > 2 else 'all'
@@ -931,6 +944,7 @@ def main():
             if v in funcs:
                 Fn.real.add(v)
     Fn.real -= {a for a, f in funcs.items() if f.name.startswith('DATA_')}
+    Fn.real |= {a for a, f in funcs.items() if f.jumps}
     print('%d of %d entries are real functions, %d are chunks' % (len(Fn.real), len(funcs), len(funcs) - len(Fn.real)))
     want = sorted(funcs) if which == 'all' else sorted(int(l.split()[0], 16) for l in open(which) if l.strip() and l[0] != '#')
     os.makedirs(out, exist_ok=True)
@@ -972,23 +986,21 @@ def main():
         first = [hi - lo + 1 for lo, hi in funcs[a].ranges if lo == a]
         return first and first[0] >= 5 and nxt.get(a, 1 << 32) - a >= 5 and not any(t in targets for t in range(a + 1, a + 5))
     hooks = {a for a in addrs if hookable(a)}
-    with open(os.path.join(out, 'recomp_tls.c'), 'w') as t:
-        t.write('#include "rt.h"\n/* the real addresses of the per-thread globals (tools/recomp/tls.txt) */\n')
-        t.write('void rc_tls_init(Ctx* c) {\n')
-        for k, (lo, n) in enumerate(TLS):
-            t.write('    c->tls[%d] = 0x%xu;  /* %d bytes */\n' % (k, lo, n))
-        t.write('}\n')
-        # for the pipeline (native.c): sizes and copy directions (1 in, 2 out, 4 scratch); one extra entry for an empty list
-        t.write('const unsigned rc_tls_n = %d;\n' % len(TLS))
-        t.write('const uint32_t rc_tls_addr0[] = {%s};\n' % ', '.join(['0x%xu' % lo for lo, n in TLS] + ['0']))
-        t.write('const uint32_t rc_tls_size[] = {%s};\n' % ', '.join(['0x%xu' % n for lo, n in TLS] + ['0']))
-        t.write('const uint8_t rc_tls_flag[] = {%s};\n' % ', '.join([str(f) for f in TLS_FL] + ['0']))
-    with open(os.path.join(out, 'recomp.h'), 'w') as h:
-        h.write(PRELUDE)
-        for a in addrs:
-            h.write('void f_%x(Ctx* c);\n' % a)
-            if a in NATIVE:
-                h.write('void fo_%x(Ctx* c);\n' % a)
+    t_buf = ['#include "rt.h"\n/* the real addresses of the per-thread globals (tools/recomp/tls.txt) */\nvoid rc_tls_init(Ctx* c) {\n']
+    for k, (lo, n) in enumerate(TLS):
+        t_buf.append('    c->tls[%d] = 0x%xu;  /* %d bytes */\n' % (k, lo, n))
+    t_buf.append('}\nconst unsigned rc_tls_n = %d;\n' % len(TLS))
+    t_buf.append('const uint32_t rc_tls_addr0[] = {%s};\n' % ', '.join(['0x%xu' % lo for lo, n in TLS] + ['0']))
+    t_buf.append('const uint32_t rc_tls_size[] = {%s};\n' % ', '.join(['0x%xu' % n for lo, n in TLS] + ['0']))
+    t_buf.append('const uint8_t rc_tls_flag[] = {%s};\n' % ', '.join([str(f) for f in TLS_FL] + ['0']))
+    write_if_changed(os.path.join(out, 'recomp_tls.c'), ''.join(t_buf))
+
+    h_buf = [PRELUDE]
+    for a in addrs:
+        h_buf.append('void f_%x(Ctx* c);\n' % a)
+        if a in NATIVE:
+            h_buf.append('void fo_%x(Ctx* c);\n' % a)
+    write_if_changed(os.path.join(out, 'recomp.h'), ''.join(h_buf))
     # x87 signatures: callers depend on callees, so iterate to a fixed point
     thunk_sigs = {}  # `jmp [import]` thunks to the CRT x87 helpers
     for a in funcs:
@@ -1024,56 +1036,62 @@ def main():
             ends_inside = all(seq[-1].mnemonic in UNCOND_END or fn.inside(seq[-1].address + seq[-1].size) for seq in fn.insns)
             if leaves_body and ends_inside:
                 Fn.leaves.add(a)
-    with open(os.path.join(out, 'leaves.h'), 'w') as h:
-        h.write('/* tiny leaf functions as always-inline copies for direct calls (recomp.py Fn.leaves) */\n')
-        for a in sorted(Fn.leaves):
-            text = Fn(funcs[a], img, index, funcs).emit()
-            head, rest = text.split('\n', 1)
-            h.write('static inline __attribute__((always_inline)) void fi_%x(Ctx* restrict c) {\n%s\n\n' % (a, rest))
+    l_buf = ['/* tiny leaf functions as always-inline copies for direct calls (recomp.py Fn.leaves) */\n']
+    for a in sorted(Fn.leaves):
+        text = Fn(funcs[a], img, index, funcs).emit()
+        head, rest = text.split('\n', 1)
+        l_buf.append('static inline __attribute__((always_inline)) void fi_%x(Ctx* restrict c) {\n%s\n\n' % (a, rest))
+    write_if_changed(os.path.join(out, 'leaves.h'), ''.join(l_buf))
     print('%d tiny leaves inlined at direct calls' % len(Fn.leaves))
     per = 400
     code_ranges = []  # (lo, hi, function index): every byte each translation was made from, inlined chunks included
     standalone_only = set()  # setjmp callers: their longjmp needs the standalone build's shim
-    for old in glob.glob(os.path.join(out, 'recomp_[0-9][0-9][0-9].c')):
-        os.remove(old)  # fewer functions means fewer files; a stale one would define functions twice
+    valid_files = set()
+    n_modified = 0
     for n in range(0, len(addrs), per):
-        with open(os.path.join(out, 'recomp_%03d.c' % (n // per)), 'w') as c:
-            c.write('#include "recomp.h"\n#include "leaves.h"\n\n')
-            for a in addrs[n:n + per]:
-                fn = Fn(funcs[a], img, index, funcs)
-                c.write(fn.emit() + '\n\n')
-                code_ranges.extend((lo, hi, index[a]) for lo, hi in fn.ranges)
-                if fn.standalone_only:
-                    standalone_only.add(a)
-    with open(os.path.join(out, 'recomp_table.c'), 'w') as t:
-        t.write('#include "recomp.h"\n')
-        # native.txt functions: src/vita/native.c defines f_X; builds without it (the PC ones) run the translation
-        t.write(''.join('__attribute__((weak)) void f_%x(Ctx* c) { fo_%x(c); }\n' % (a, a) for a in addrs if a in NATIVE))
-        t.write('const unsigned rc_count = %d, lifted_count = %d;\n' % (len(addrs), len(addrs)))
-        t.write('const uint32_t rc_addr[] = {%s};\n' % ','.join(hx(a) for a in addrs))
-        t.write('rc_fn const rc_impl[] = {%s};\n' % ','.join('f_%x' % a for a in addrs))
-        t.write('void* const lifted_impl[] = {%s};\n' % ','.join('(void*)f_%x' % a for a in addrs))
-        t.write('const uint32_t rc_entries[] = {%s};\nconst unsigned rc_nentries = %d;\n' % (','.join(hx(a) for a in sorted(funcs)), len(funcs)))
-        t.write('unsigned char rc_on[%d];\nvolatile long lifted_hits[%d];\n' % (len(addrs), len(addrs)))
-        # hook stubs: push the translated function, enter through the bridge (x86 only: the Vita has no native
-        # code to enter from)
-        t.write('#if defined(__i386__) && !defined(USM_VPC)\n__asm__(".text\\n"\n')
-        for a in addrs:
-            t.write('  "_rcs_%x: .byte 0x68\\n .long _f_%x\\n jmp _rc_enter\\n"\n' % (a, a))  # push imm32
-        t.write(');\n')
-        t.write(''.join('extern char rcs_%x[];\n' % a for a in addrs))
-        t.write('struct lifted_entry { unsigned addr; void* fn; };\n')
-        t.write('const struct lifted_entry lifted_table[] = {%s};\n' % ','.join('{%s, %s}' % (hx(a), 'rcs_%x' % a if a in hooks else '0') for a in addrs))
-        # every function's native-to-translated entry, hookable or not (the standalone build enters through these)
-        t.write('void* const rc_stub[] = {%s};\n#endif\n' % ','.join('rcs_%x' % a for a in addrs))
-        t.write('const unsigned char rc_standalone_only[] = {%s};\n' % ','.join('1' if a in standalone_only else '0' for a in addrs))
-        code_ranges.sort()
-        t.write('/* code each translation was made from: {lo, hi, index}, sorted by lo */\n')
-        t.write('const uint32_t rc_ranges[][3] = {%s};\nconst unsigned rc_nranges = %d;\n' % (
-            ','.join('{%s,%s,%d}' % (hx(lo), hx(hi), k) for lo, hi, k in code_ranges), len(code_ranges)))
-    with open(os.path.join(out, 'skipped.tsv'), 'w') as s:
-        for a, why in skipped:
-            s.write('%x\t%s\n' % (a, why))
+        fn_path = os.path.join(out, 'recomp_%03d.c' % (n // per))
+        valid_files.add(os.path.abspath(fn_path))
+        c_buf = ['#include "recomp.h"\n#include "leaves.h"\n\n']
+        for a in addrs[n:n + per]:
+            fn = Fn(funcs[a], img, index, funcs)
+            c_buf.append(fn.emit() + '\n\n')
+            code_ranges.extend((lo, hi, index[a]) for lo, hi in fn.ranges)
+            if fn.standalone_only:
+                standalone_only.add(a)
+        if write_if_changed(fn_path, ''.join(c_buf)):
+            n_modified += 1
+    for old in glob.glob(os.path.join(out, 'recomp_[0-9][0-9][0-9].c')):
+        if os.path.abspath(old) not in valid_files:
+            os.remove(old)
+    print('%d files updated out of %d' % (n_modified, (len(addrs) + per - 1) // per))
+
+    t_buf = ['#include "recomp.h"\n']
+    t_buf.append(''.join('__attribute__((weak)) void f_%x(Ctx* c) { fo_%x(c); }\n' % (a, a) for a in addrs if a in NATIVE))
+    t_buf.append('const unsigned rc_count = %d, lifted_count = %d;\n' % (len(addrs), len(addrs)))
+    t_buf.append('const uint32_t rc_addr[] = {%s};\n' % ','.join(hx(a) for a in addrs))
+    t_buf.append('rc_fn const rc_impl[] = {%s};\n' % ','.join('f_%x' % a for a in addrs))
+    t_buf.append('void* const lifted_impl[] = {%s};\n' % ','.join('(void*)f_%x' % a for a in addrs))
+    t_buf.append('const uint32_t rc_entries[] = {%s};\nconst unsigned rc_nentries = %d;\n' % (','.join(hx(a) for a in sorted(funcs)), len(funcs)))
+    t_buf.append('unsigned char rc_on[%d];\nvolatile long lifted_hits[%d];\n' % (len(addrs), len(addrs)))
+    t_buf.append('#if defined(__i386__) && !defined(USM_VPC)\n__asm__(".text\\n"\n')
+    for a in addrs:
+        t_buf.append('  "_rcs_%x: .byte 0x68\\n .long _f_%x\\n jmp _rc_enter\\n"\n' % (a, a))
+    t_buf.append(');\n')
+    t_buf.append(''.join('extern char rcs_%x[];\n' % a for a in addrs))
+    t_buf.append('struct lifted_entry { unsigned addr; void* fn; };\n')
+    t_buf.append('const struct lifted_entry lifted_table[] = {%s};\n' % ','.join('{%s, %s}' % (hx(a), 'rcs_%x' % a if a in hooks else '0') for a in addrs))
+    t_buf.append('void* const rc_stub[] = {%s};\n#endif\n' % ','.join('rcs_%x' % a for a in addrs))
+    t_buf.append('const unsigned char rc_standalone_only[] = {%s};\n' % ','.join('1' if a in standalone_only else '0' for a in addrs))
+    code_ranges.sort()
+    t_buf.append('/* code each translation was made from: {lo, hi, index}, sorted by lo */\n')
+    t_buf.append('const uint32_t rc_ranges[][3] = {%s};\nconst unsigned rc_nranges = %d;\n' % (
+        ','.join('{%s,%s,%d}' % (hx(lo), hx(hi), k) for lo, hi, k in code_ranges), len(code_ranges)))
+    write_if_changed(os.path.join(out, 'recomp_table.c'), ''.join(t_buf))
+
+    s_buf = []
+    for a, why in skipped:
+        s_buf.append('%x\t%s\n' % (a, why))
+    write_if_changed(os.path.join(out, 'skipped.tsv'), ''.join(s_buf))
     print('%d functions translated (%d can be hooked), %d skipped' % (len(addrs), len(hooks), len(skipped)))
 
 
