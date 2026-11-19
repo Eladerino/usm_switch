@@ -287,11 +287,13 @@ static void save_settings(void) {
     fprintf(f, "[debug]\nwireframe=%d\nlog=%d\n",
             s_debug_rows[0].cur, s_debug_rows[1].cur);
     fclose(f);
+    fsdevCommitDevice("save");
     vlog("options: settings saved to " USM_DIR "settings.ini\n");
 }
 
 static void load_settings(void) {
     FILE* f = fopen(USM_DIR "settings.ini", "r");
+    if (!f) f = fopen("romfs:/settings.ini", "r");
     if (!f) return;
     char line[128];
     while (fgets(line, sizeof line, f)) {

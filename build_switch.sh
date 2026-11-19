@@ -20,4 +20,4 @@ cmake -S switch -B build-switch -G Ninja \
   -DCMAKE_BUILD_TYPE=Release
 
 echo "=== BUILD ELF & NRO ==="
-ninja -C build-switch -j4
+ninja -C build-switch -j$(nproc)

@@ -185,17 +185,7 @@ static uint32_t fnv(const uint8_t* p, uint32_t n) {
 }
 /* shader bytecode to ux0:data/usm/shaders/<hash>.vs|ps: the exact set the translator must handle */
 static void dump_shader(uint32_t code, const char* ext) {
-    uint32_t n = 0;
-    while (n < 0x10000 && LD32(code + 4 * n) != 0x0000ffffu) n++;  /* end token */
-    n = 4 * (n + 1);
-    uint32_t h = fnv(H(code), n);
-    if (!first_time(1, h)) return;
-    char path[96];
-    mkdir(USM_DIR "shaders", 0777);
-    snprintf(path, sizeof path, USM_DIR "shaders/%08x.%s", h, ext);
-    FILE* f = fopen(path, "wb");
-    if (f) fwrite(H(code), 1, n, f), fclose(f);
-    vlog("shader %08x.%s: version %08x, %u bytes\n", h, ext, LD32(code), n);
+    (void)code; (void)ext;
 }
 
 /* ---- device ---- */
