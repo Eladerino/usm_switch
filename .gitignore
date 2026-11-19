@@ -8,6 +8,8 @@ build*/
 *.exe
 *.o
 *.obj
+*.nsp
+dist/
 
 # Generated from the game's own code: never publish (regenerate from your USM.exe, see README)
 src/recomp/gen/

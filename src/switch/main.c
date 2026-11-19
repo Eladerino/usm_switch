@@ -21,44 +21,7 @@ static uint8_t* g_image;
 PadState pad;
 int main(int argc, char* argv[]);
 
-/* libnx user exception handler for capturing crashes and dumping registers */
-alignas(16) u8 __nx_exception_stack[0x20000];
-u64 __nx_exception_stack_size = sizeof(__nx_exception_stack);
-
-void __libnx_exception_handler(ThreadExceptionDump* ctx) {
-    static int crashing = 0;
-    if (crashing) {
-        for (;;) svcSleepThread(1000000000ULL);
-    }
-    crashing = 1;
-
-    uintptr_t main_addr = (uintptr_t)&main;
-    char buf[1024];
-    snprintf(buf, sizeof(buf),
-        "\n================ CRASH DUMP ================\n"
-        "Exception: 0x%x, ESR: 0x%x, FAR: 0x%llx\n"
-        "PC: 0x%llx (main + 0x%llx)\n"
-        "LR: 0x%llx (main + 0x%llx)\n"
-        "SP: 0x%llx, FP: 0x%llx\n"
-        "X0: 0x%llx, X1: 0x%llx, X2: 0x%llx, X3: 0x%llx\n"
-        "============================================\n",
-        ctx->error_desc, ctx->esr, (unsigned long long)ctx->far.x,
-        (unsigned long long)ctx->pc.x, (unsigned long long)(ctx->pc.x - main_addr),
-        (unsigned long long)ctx->lr.x, (unsigned long long)(ctx->lr.x - main_addr),
-        (unsigned long long)ctx->sp.x, (unsigned long long)ctx->fp.x,
-        (unsigned long long)ctx->cpu_gprs[0].x, (unsigned long long)ctx->cpu_gprs[1].x,
-        (unsigned long long)ctx->cpu_gprs[2].x, (unsigned long long)ctx->cpu_gprs[3].x
-    );
-    vlog("%s", buf);
-    FILE* f = fopen(USM_DIR "crash.txt", "w");
-    if (f) {
-        fputs(buf, f);
-        fflush(f);
-        fclose(f);
-    }
-    svcSleepThread(500000000ULL);
-    svcExitProcess();
-}
+/* libnx default exception handling */
 
 void fatal(const char* msg) {
     vlog("FATAL: %s\n", msg);
@@ -85,10 +48,16 @@ static int pops_of(const char* dll, const char* name) {
 }
 
 static uint32_t load_exe(void) {
-    vlog("loading " USM_DIR "USM.exe\n");
-    FILE* f = fopen(USM_DIR "USM.exe", "rb");
+    vlog("loading USM.exe\n");
+    FILE* f = fopen("romfs:/USM.exe", "rb");
+    if (f) {
+        vlog("found USM.exe in romfs:/\n");
+    } else {
+        f = fopen(USM_DIR "USM.exe", "rb");
+        if (f) vlog("found USM.exe in " USM_DIR "\n");
+    }
     if (!f) {
-        vlog("cannot open " USM_DIR "USM.exe: copy it there from your PC install\n");
+        vlog("cannot open USM.exe in romfs:/ or " USM_DIR "\n");
         return 0;
     }
     fseek(f, 0, SEEK_END);
@@ -172,14 +141,62 @@ static void* game_thread(void* raw) {
 
 int main(int argc, char* argv[]) {
     (void)argc; (void)argv;
-    mkdir("sdmc:/switch", 0777);
-    mkdir("sdmc:/switch/usm", 0777);
-    chdir("sdmc:/switch/usm");
 
-    vlog("=== usm_switch starting ===\n");
     romfsInit();
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&pad);
+
+    /* Mount user save data in emuNAND / NAND (save:/) */
+    AccountUid uid = {0};
+    if (R_SUCCEEDED(accountInitialize(AccountServiceType_Application))) {
+        if (R_FAILED(accountGetPreselectedUser(&uid))) {
+            accountGetLastOpenedUser(&uid);
+        }
+        accountExit();
+    }
+    u64 app_id = 0x01c483a5b2b53000ULL;
+    Result rc = fsdevMountSaveData("save", app_id, uid);
+    if (R_FAILED(rc)) {
+        rc = fsdevMountDeviceSaveData("save", app_id);
+    }
+    if (R_FAILED(rc)) {
+        FsSaveDataAttribute attr;
+        FsSaveDataCreationInfo info;
+        FsSaveDataMetaInfo meta;
+        memset(&attr, 0, sizeof(attr));
+        memset(&info, 0, sizeof(info));
+        memset(&meta, 0, sizeof(meta));
+
+        attr.application_id = app_id;
+        attr.uid = uid;
+        attr.save_data_type = FsSaveDataType_Account;
+        attr.save_data_rank = FsSaveDataRank_Primary;
+
+        info.save_data_size = 16 * 1024 * 1024;
+        info.journal_size = 16 * 1024 * 1024;
+        info.owner_id = app_id;
+        info.save_data_space_id = FsSaveDataSpaceId_User;
+
+        fsCreateSaveDataFileSystem(&attr, &info, &meta);
+        rc = fsdevMountSaveData("save", app_id, uid);
+    }
+
+    if (R_SUCCEEDED(rc)) {
+        mkdir("save:/Activision", 0777);
+        mkdir("save:/Activision/Ultimate Spider-Man", 0777);
+        mkdir("save:/Activision/Ultimate Spider-Man/Save", 0777);
+        mkdir("save:/Activision/Ultimate Spider-Man/Screenshot", 0777);
+        mkdir("save:/shadercache", 0777);
+    } else {
+        /* Running as Homebrew NRO without save partition: use sdmc save directory */
+        mkdir("sdmc:/switch/usm", 0777);
+        mkdir("sdmc:/switch/usm/save", 0777);
+        mkdir("sdmc:/switch/usm/save/Activision", 0777);
+        mkdir("sdmc:/switch/usm/save/Activision/Ultimate Spider-Man", 0777);
+        mkdir("sdmc:/switch/usm/save/Activision/Ultimate Spider-Man/Save", 0777);
+        mkdir("sdmc:/switch/usm/save/Activision/Ultimate Spider-Man/Screenshot", 0777);
+        mkdir("sdmc:/switch/usm/save/shadercache", 0777);
+    }
 
     g_image = memalign(0x10000, IMAGE_SIZE);
     vlog("usm_switch memory allocated (image at %p, main at %p)\n", g_image, (void*)&main);
@@ -190,7 +207,7 @@ int main(int argc, char* argv[]) {
 
     uint32_t entry = load_exe();
     if (!entry) {
-        fatal("Cannot load " USM_DIR "USM.exe\nMake sure USM.exe and the Data folder are inside sdmc:/switch/usm/");
+        fatal("Cannot load USM.exe from romfs:/ or " USM_DIR "USM.exe");
     }
 
     GameThreadArgs args = { entry, 0 };
@@ -212,6 +229,8 @@ int main(int argc, char* argv[]) {
     vlog("=== usm_switch ended cleanly ===\n");
     void reg_flush(void);
     reg_flush();
+    fsdevCommitDevice("save");
+    fsdevUnmountDevice("save");
     options_menu_cleanup();
     romfsExit();
     svcExitProcess();

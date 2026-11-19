@@ -17,6 +17,7 @@
 #include <libavutil/frame.h>
 
 #include "usm_switch.h"
+#include "switch_util.h"
 
 #define S(i) ((char*)H(ARG(i)))
 
@@ -270,7 +271,9 @@ static void BinkOpen_(Ctx* c) {  /* (path, flags) */
     snprintf(base, sizeof base, "%s", b);
     char* dot = strrchr(base, '.');
     if (dot) *dot = 0;
-    snprintf(dat, sizeof dat, USM_DIR "Data/movies/pc/%s.dat", base);
+    char raw[256];
+    snprintf(raw, sizeof raw, "Data/movies/pc/%s.dat", base);
+    map_path(raw, dat, sizeof dat);
     c->eax = 0;
     close_movie();
     g_shown = 0;

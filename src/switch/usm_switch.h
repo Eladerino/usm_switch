@@ -7,7 +7,7 @@
 
 #include "rt.h"
 
-#define USM_DIR "sdmc:/switch/usm/"
+#define USM_DIR "save:/"
 
 static inline uint32_t G(const void* p) { return p ? (uint32_t)((uintptr_t)p - (uintptr_t)rc_guest) : 0; }
 static inline void* H(uint32_t a) { return a ? (void*)RC_P(a) : NULL; }

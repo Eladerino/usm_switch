@@ -100,15 +100,54 @@ cmake -S switch -B build-switch -G Ninja \
 ninja -C build-switch -j$(nproc)
 ```
 
-Upon a successful build, the final executable will be produced at:
+Upon a successful build, the following executables are generated in `build-switch/`:
+- `build-switch/usm_switch.nro` — Homebrew NRO application.
+- `build-switch/main` — Native NSO executable binary for NSP packaging.
+
+---
+
+### Step 4: Build the Standalone NSP (Optional, Recommended)
+
+You can package the compiled binary and your game assets into a **self-contained Standalone NSP** that installs directly to the Switch HOME Menu (just like a standard retail Switch game, eliminating the need to keep files in `sdmc:/switch/usm/`).
+
+#### Prerequisites for NSP packaging:
+1. **`hacbrewpack`**: Download `hacbrewpack` (or place `hacbrewpack.exe` in your `PATH` or `tools/`).
+2. **`prod.keys`**: Your dumped Nintendo Switch keys file (from Lockpick_RCM).
+3. **PC Game Files**: Your PC install folder containing `Data/` and `USM.exe`.
+
+#### Run the NSP Builder:
+```bash
+python3 scripts/build_nsp.py \
+  --game-dir "/path/to/Ultimate Spider-Man" \
+  --keys "/path/to/prod.keys"
 ```
-build-switch/usm_switch.nro
+*(On Windows PowerShell)*:
+```powershell
+python scripts\build_nsp.py --game-dir "D:\ROMS\Ultimate-Spider-Man_Win_EN_Full-Rip\usm" --keys "D:\ROMS\prod.keys"
+```
+
+The script automatically stages the ExeFS (`main`, custom NPDM with 39-bit memory space and full RAM pool), Control romfs (title icon, NACP metadata, 64 MB save allocation), and RomFS (case-insensitively resolved game data), producing the finalized NSP inside `dist/`:
+```
+dist/Ultimate Spider-Man [01c483a5b2b53000][v0].nsp
 ```
 
 ---
 
-## SD Card Installation
+## Installation & Playing
 
+You can install and run the port in either of two ways:
+
+### Method A: Standalone NSP (Recommended)
+1. Transfer `Ultimate Spider-Man [01c483a5b2b53000][v0].nsp` to your Switch using **DBI** (via MTP Responder / Title install), **Tinfoil**, or **Goldleaf**.
+2. Launch **Ultimate Spider-Man** directly from the **Nintendo Switch HOME Menu**.
+3. **Features of Standalone NSP**:
+   - **Zero SD Clutter**: All assets and executables live inside the game's internal RomFS package; no files are needed in `sdmc:/switch/usm/`.
+   - **Native Save Partition**: Game saves and settings are stored directly in your Switch user account partition (`save:/`), supporting standard Atmosphere and DBI save management and backups.
+   - **Full Memory Allocation**: Automatically granted full retail application RAM (~3.1 GB DRAM) and native OS priority.
+
+---
+
+### Method B: Homebrew NRO
 1. Copy `usm_switch.nro` to your Nintendo Switch SD card:
    - Location: `sdmc:/switch/usm/usm_switch.nro`
 2. Copy `USM.exe` and the `Data/` folder from your PC installation into `sdmc:/switch/usm/`:
@@ -129,9 +168,7 @@ build-switch/usm_switch.nro
    ```
 3. Launch `usm_switch` from the Homebrew Launcher.
    > [!IMPORTANT]
-   > For the best performance and stability, launch via **title-override mode** (hold `R` while launching any installed Switch game from the HOME menu) so that the Homebrew Launcher grants the port full RAM access (~3.1 GB available memory).
-
----
+   > For the best performance and stability when running the NRO, launch via **title-override mode** (hold `R` while launching any installed Switch game from the HOME menu) so that the Homebrew Launcher grants full RAM access.
 
 ## Controls
 

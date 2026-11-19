@@ -72,3 +72,9 @@ nx_create_nro(usm_switch
     ICON ${CMAKE_CURRENT_SOURCE_DIR}/icon.jpg
 )
 
+add_custom_target(usm_switch_nso ALL
+    COMMAND elf2nso $<TARGET_FILE:usm_switch.elf> main
+    COMMAND cp usm_switch.nacp control.nacp
+    DEPENDS usm_switch.elf usm_switch.nacp
+)
+

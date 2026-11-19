@@ -1,10 +1,102 @@
 #include <ctype.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <pthread.h>
 
 #include "usm_switch.h"
 #include "switch_util.h"
+
+#define CASE_CACHE_SIZE 256
+typedef struct {
+    char orig[256];
+    char resolved[256];
+} CaseCache;
+static CaseCache s_case_cache[CASE_CACHE_SIZE];
+static unsigned s_case_cache_count = 0;
+static pthread_mutex_t s_case_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void resolve_romfs_case(char* path) {
+    if (strncmp(path, "romfs:/", 7) != 0) return;
+
+    struct stat st;
+    if (stat(path, &st) == 0) return;
+
+    pthread_mutex_lock(&s_case_lock);
+    for (unsigned i = 0; i < s_case_cache_count; i++) {
+        if (!strcmp(s_case_cache[i].orig, path)) {
+            strcpy(path, s_case_cache[i].resolved);
+            pthread_mutex_unlock(&s_case_lock);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&s_case_lock);
+
+    char orig_path[256];
+    strncpy(orig_path, path, sizeof(orig_path) - 1);
+    orig_path[sizeof(orig_path) - 1] = '\0';
+
+    char resolved[512] = "romfs:/";
+    char* cur = path + 7;
+    while (*cur == '/') cur++;
+
+    while (*cur) {
+        char seg[128];
+        char* slash = strchr(cur, '/');
+        size_t seg_len = slash ? (size_t)(slash - cur) : strlen(cur);
+        if (seg_len >= sizeof(seg)) seg_len = sizeof(seg) - 1;
+        memcpy(seg, cur, seg_len);
+        seg[seg_len] = '\0';
+
+        if (strchr(seg, '*') || strchr(seg, '?')) {
+            size_t rlen = strlen(resolved);
+            if (rlen > 0 && resolved[rlen - 1] != '/') strncat(resolved, "/", sizeof(resolved) - rlen - 1);
+            strncat(resolved, cur, sizeof(resolved) - strlen(resolved) - 1);
+            strcpy(path, resolved);
+            return;
+        }
+
+        cur += seg_len;
+        while (*cur == '/') cur++;
+
+        DIR* d = opendir(resolved);
+        if (!d) return;
+
+        struct dirent* ent;
+        int found = 0;
+        char matched[128];
+        while ((ent = readdir(d)) != NULL) {
+            if (!strcasecmp(ent->d_name, seg)) {
+                snprintf(matched, sizeof matched, "%s", ent->d_name);
+                found = 1;
+                break;
+            }
+        }
+        closedir(d);
+
+        if (!found) return;
+
+        size_t rlen = strlen(resolved);
+        if (rlen > 0 && resolved[rlen - 1] != '/') {
+            strncat(resolved, "/", sizeof(resolved) - rlen - 1);
+        }
+        strncat(resolved, matched, sizeof(resolved) - strlen(resolved) - 1);
+    }
+
+    if (stat(resolved, &st) == 0) {
+        pthread_mutex_lock(&s_case_lock);
+        if (s_case_cache_count < CASE_CACHE_SIZE) {
+            strncpy(s_case_cache[s_case_cache_count].orig, orig_path, sizeof(s_case_cache[0].orig) - 1);
+            strncpy(s_case_cache[s_case_cache_count].resolved, resolved, sizeof(s_case_cache[0].resolved) - 1);
+            s_case_cache_count++;
+        }
+        pthread_mutex_unlock(&s_case_lock);
+        strcpy(path, resolved);
+    }
+}
 
 char* gstrdup(const char* s) {
     char* d = guest_alloc((uint32_t)strlen(s) + 1);
@@ -86,8 +178,9 @@ void map_path(const char* game, char* out, unsigned n) {
     for (; game[k] && k < sizeof p - 1; k++) p[k] = game[k] == '\\' ? '/' : game[k];
     p[k] = 0;
 
-    if (!strncmp(p, "sdmc:/", 6) || !strncmp(p, "romfs:/", 7)) {
+    if (!strncmp(p, "save:/", 6) || !strncmp(p, "romfs:/", 7)) {
         snprintf(out, n, "%s", p);
+        if (!strncmp(out, "romfs:/", 7)) resolve_romfs_case(out);
         return;
     }
 
@@ -103,19 +196,73 @@ void map_path(const char* game, char* out, unsigned n) {
     while (*s == '/') s++;
 
     if (*s == '\0') {
-        snprintf(out, n, "sdmc:/switch/usm");
+        snprintf(out, n, "save:/");
+    } else if (!strncasecmp(s, "save", 4)) {
+        /* User saves stay in emuNAND save:/ */
+        if (!strncasecmp(s, "save/", 5)) {
+            const char* sub = s + 5;
+            char cand[512];
+            snprintf(cand, sizeof cand, "save:/%s", sub);
+            struct stat st;
+            if (stat(cand, &st) == 0) {
+                snprintf(out, n, "%s", cand);
+            } else {
+                /* Check if only the filename (e.g. Save0) exists at save:/Save0 */
+                const char* slash = strrchr(sub, '/');
+                const char* fname = slash ? slash + 1 : sub;
+                char flat[512];
+                snprintf(flat, sizeof flat, "save:/%s", fname);
+                if (stat(flat, &st) == 0) {
+                    snprintf(out, n, "%s", flat);
+                } else {
+                    /* Default to the full subpath */
+                    snprintf(out, n, "%s", cand);
+                }
+            }
+        } else {
+            snprintf(out, n, "save:/");
+        }
+    } else if (!strcasecmp(s, "settings.ini") || !strcasecmp(s, "resolution.txt") || !strcasecmp(s, "registry.txt")) {
+        char cand[512];
+        snprintf(cand, sizeof cand, "save:/%s", s);
+        struct stat st;
+        if (stat(cand, &st) == 0) {
+            snprintf(out, n, "%s", cand);
+        } else {
+            /* Fall back to embedded RomFS default */
+            snprintf(out, n, "romfs:/%s", s);
+        }
     } else {
-        snprintf(out, n, USM_DIR "%s", s);
+        /* Check if file exists in RomFS (e.g. Data/...) */
+        snprintf(out, n, "romfs:/%s", s);
     }
 
     size_t len = strlen(out);
-    while (len > strlen("sdmc:/switch/usm") && out[len - 1] == '/') {
+    while (len > strlen("save:/") && out[len - 1] == '/') {
         out[--len] = '\0';
     }
-}
 
-#include <unistd.h>
-#include <pthread.h>
+    if (!strncmp(out, "romfs:/", 7)) {
+        resolve_romfs_case(out);
+        struct stat st;
+        if (stat(out, &st) != 0) {
+            /* If not found in RomFS (e.g. running as NRO from SD card), fall back to SD card */
+            char sdmc_path[512];
+            snprintf(sdmc_path, sizeof sdmc_path, "sdmc:/switch/usm/%s", s);
+            if (stat(sdmc_path, &st) == 0) {
+                snprintf(out, n, "%s", sdmc_path);
+            }
+        }
+    } else if (!strncmp(out, "save:/", 6)) {
+        struct stat st;
+        if (stat("save:/", &st) != 0) {
+            /* If save:/ partition is not mounted (e.g. running as NRO), fall back to sdmc */
+            char sdmc_save[512];
+            snprintf(sdmc_save, sizeof sdmc_save, "sdmc:/switch/usm/%s", s);
+            snprintf(out, n, "%s", sdmc_save);
+        }
+    }
+}
 
 static pthread_mutex_t g_io_lock = PTHREAD_MUTEX_INITIALIZER;
 

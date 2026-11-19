@@ -203,7 +203,7 @@ void* crt_file(uint32_t f) {
     return H(f);
 }
 #define F(i) ((FILE*)crt_file(ARG(i)))
-static void fclose_(Ctx* c) { c->eax = (uint32_t)fclose(F(0)); }
+static void fclose_(Ctx* c) { c->eax = (uint32_t)fclose(F(0)); fsdevCommitDevice("save"); }
 static void fread_(Ctx* c) { c->eax = (uint32_t)fread(H(ARG(0)), ARG(1), ARG(2), F(3)); }
 static void fwrite_(Ctx* c) { c->eax = (uint32_t)fwrite(H(ARG(0)), ARG(1), ARG(2), F(3)); }
 static void fseek_(Ctx* c) { c->eax = (uint32_t)fseek(F(0), (long)(int32_t)ARG(1), (int)ARG(2)); }

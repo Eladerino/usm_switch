@@ -20,35 +20,15 @@ static FILE* g_log = NULL;
 static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int log_on(void) {
-    return 1;
+    return 0;
 }
 
 void vlog(const char* fmt, ...) {
-    pthread_mutex_lock(&g_log_lock);
-    if (!g_log) {
-        mkdir("sdmc:/switch", 0777);
-        mkdir(USM_DIR, 0777);
-        remove(USM_DIR "log_prev.txt");
-        rename(USM_DIR "log.txt", USM_DIR "log_prev.txt");
-        g_log = fopen(USM_DIR "log.txt", "w");
-    }
-    if (g_log) {
-        va_list ap;
-        va_start(ap, fmt);
-        vfprintf(g_log, fmt, ap);
-        va_end(ap);
-        fflush(g_log);
-    }
-    pthread_mutex_unlock(&g_log_lock);
+    (void)fmt;
 }
 
 void rc_log(const char* fmt, ...) {
-    char buf[512];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(buf, sizeof buf, fmt, ap);
-    va_end(ap);
-    vlog("%s", buf);
+    (void)fmt;
 }
 
 void negative_guest(uint32_t a) {
@@ -121,20 +101,7 @@ Ctx* rc_ctx(void) {
 }
 
 void vcrash(const char* fmt, ...) {
-    char buf[512];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(buf, sizeof buf, fmt, ap);
-    va_end(ap);
-    vlog("%s", buf);
-    mkdir("sdmc:/switch", 0777);
-    mkdir(USM_DIR, 0777);
-    FILE* f = fopen(USM_DIR "crash.txt", "a");
-    if (f) {
-        fprintf(f, "%s", buf);
-        fflush(f);
-        fclose(f);
-    }
+    (void)fmt;
 }
 
 /* ---- Traps ---- */

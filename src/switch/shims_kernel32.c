@@ -487,6 +487,7 @@ static void CloseHandle_(Ctx* c) {
     if (o && o->kind == H_FILE) {  /* its queued async requests are aborted, a running one finishes first */
         io_cancel(ARG(0), NULL);
         pthread_mutex_lock(&g_io_busy), close(o->fd), pthread_mutex_unlock(&g_io_busy);
+        fsdevCommitDevice("save");
     }
     if (o && o->kind != H_WAIT) o->kind = H_FREE;  /* waitable objects stay: a thread may still signal one */
     c->eax = o != NULL;
@@ -497,21 +498,26 @@ static void GetFileAttributesA_(Ctx* c) {
     map_path(S(0), p, sizeof p);
     c->eax = stat(p, &st) ? INVALID_HANDLE : S_ISDIR(st.st_mode) ? 0x10 : 0x80;
 }
+static void mkdir_recursive(const char* path) {
+    char tmp[512];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    char* p = tmp;
+    if (!strncmp(p, "save:/", 6)) p += 6;
+    for (; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(tmp, 0777);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0777);
+}
 static void CreateDirectoryA_(Ctx* c) {
     char p[512];
     map_path(S(0), p, sizeof p);
-    int res = mkdir(p, 0777);
-    if (res == 0) {
-        set_error(c, 0);
-        c->eax = 1;
-    } else {
-        if (errno == EEXIST) {
-            set_error(c, 183); // ERROR_ALREADY_EXISTS
-        } else {
-            set_error(c, 3);   // ERROR_PATH_NOT_FOUND
-        }
-        c->eax = 0;
-    }
+    mkdir_recursive(p);
+    set_error(c, 0);
+    c->eax = 1;
 }
 static void DeleteFileA_(Ctx* c) {
     char p[512];

@@ -33,6 +33,7 @@ static void reg_load(void) {
     if (g_nreg >= 0) return;
     g_nreg = 0;
     FILE* f = fopen(REG_FILE, "r");
+    if (!f) f = fopen("romfs:/registry.txt", "r");
     if (!f) { reg_defaults(); reg_save(); return; }
     char line[800];
     while (g_nreg < 256 && fgets(line, sizeof line, f)) {
@@ -85,7 +86,9 @@ static void reg_defaults(void) {
         if (fscanf(lf, "%d", &n) != 1 || n < 0 || n > 4) n = 0;
         fclose(lf);
         char file[96];
-        snprintf(file, sizeof file, USM_DIR "Data/usm_lt%c.usm", "efgsi"[n]);
+        char raw[96];
+        snprintf(raw, sizeof raw, "Data/usm_lt%c.usm", "efgsi"[n]);
+        map_path(raw, file, sizeof file);
         if (!(lf = fopen(file, "r"))) vlog("language: %s is missing, using English\n", file), n = 0;
         else fclose(lf);
         static const char* path = "HKCU\\Software\\Activision\\Ultimate Spider-Man\\Settings\\Language";
@@ -95,6 +98,7 @@ static void reg_defaults(void) {
     }
     /* sdmc:/switch/usm/resolution.txt ("1280x720"): the 3D resolution, over whatever the Options menu saved (read at start) */
     FILE* rf = fopen(USM_DIR "resolution.txt", "r");
+    if (!rf) rf = fopen("romfs:/resolution.txt", "r");
     unsigned rw, rh;
     if (rf) {
         if (fscanf(rf, "%ux%u", &rw, &rh) == 2 && rw >= 160 && rw <= 1920 && rh >= 90 && rh <= 1080) {
@@ -187,6 +191,7 @@ static void reg_save(void) {
         fputc('\n', f);
     }
     fclose(f);
+    fsdevCommitDevice("save");
 }
 /* the full path of key h plus sub ("" for none) */
 static int reg_path(uint32_t h, uint32_t sub, char* out) {
