@@ -110,10 +110,16 @@ static uint32_t load_exe(void) {
     uint32_t entry = base + *(uint32_t*)(file + pe + 40);
     free(file);
 
-    /* Gamepad default button table fix */
+    /* Gamepad default button table fix. Rows are 0x48 bytes, pad slot at +0x40 (device << 16 | code).
+       The 7th row (0x88da38) is CameraCenter: on Vita it was 0x1d (rear touch), but on Switch
+       Center Camera is Button 10 / 0x1e (Right Stick click) and 0x1d is BackButton / Map
+       (shims_misc.c). This table was copied from Vita with the stale 0x1d; Revert to Default on
+       the Controls page (guest 0x587900, saved by 0x587c50) copies this table over the live
+       bindings, so the stale value rebound Center Camera to Left Stick click until the next
+       boot's registry upgrade fixed it again. */
     static const struct { uint32_t row, code; } pad[] = {
         {0x88d888, 0x1a}, {0x88d8d0, 0x19}, {0x88d918, 0x0c}, {0x88d960, 0x0b},
-        {0x88d9a8, 0x06}, {0x88d9f0, 0x05}, {0x88da38, 0x1d}
+        {0x88d9a8, 0x06}, {0x88d9f0, 0x05}, {0x88da38, 0x1e}
     };
     for (unsigned i = 0; i < sizeof pad / sizeof *pad; i++) {
         *(uint32_t*)(image + pad[i].row - base + 0x40) = (3u << 16) | pad[i].code;
