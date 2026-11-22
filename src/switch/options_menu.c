@@ -31,33 +31,38 @@ static MenuRow s_graphics_rows[] = {
     {"View distance", 2, 6, {"80 m", "100 m", "120 m (Default)", "150 m", "200 m", "Max (Far City)"}, "City view distance before fog"},
     {"Far city fog", 1, 2, {"Off", "On"}, "Show distance fog over Manhattan"},
     {"Particle detail", 1, 3, {"Low", "Medium (Default)", "High"}, "Smoke, fire, and explosion effects"},
-    {"Resolution mode", 0, 4, {"Native 720p (1280x720) [Crisp]", "1080p Docked (1920x1080)", "Performance 544p (960x544)", "Low 480p (640x480)"}, "Internal 3D rendering resolution"},
+    {"Resolution mode", 0, 4, {"Native 720p (1280x720) [Crisp]", "1080p Docked (1920x1080)", "Performance 544p (960x544)", "Low 480p (640x480)"}, "Internal 3D rendering resolution - restart the game to apply"},
     {"Anti-Aliasing (FXAA)", 0, 4, {"Off", "Low (Light)", "Medium (Smooth)", "High (Ultra Smooth)"}, "Removes pixelated edges and jaggies from character and city"},
     {"Rescaling / Sharpening", 0, 4, {"Bilinear", "Bicubic Sharp", "FSR 1.0 (EASU+RCAS)", "FSR Ultra Sharp"}, "Adaptive contrast sharpening & image reconstruction"}
 };
 
 static MenuRow s_controls_rows[] = {
-    {"Camera Invert X", 0, 2, {"Normal", "Inverted"}, "Horizontal camera rotation"},
-    {"Camera Invert Y", 0, 2, {"Normal", "Inverted"}, "Vertical camera pitch"},
-    {"Stick Sensitivity", 2, 5, {"0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x"}, "Look stick sensitivity"},
-    {"Vibration / Rumble", 1, 2, {"Off", "On"}, "HD Rumble feedback on hits & web swing"},
+    /* Model indices: getters/save/load read these by number — never reorder.
+       Invert X/Y were removed (Brandon's call, §3.4 fallback): camera invert lives
+       in the game's own Options menu, which is the single source of truth.
+       Rumble row removed: placebo, no vibration path (CreateEffect = E_NOTIMPL);
+       keeping an honest "not supported" row instead is a one-line change. */
+    {"Camera Stick Sensitivity", 2, 5, {"0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x"}, "Right-stick camera speed"},
     {"Swap A/B buttons", 0, 2, {"Off (B: Jump, A: Action)", "On (A: Jump, B: Action)"}, "Swap A and B button functions"},
     {"--- Controller Map ---", 0, 1, {"[ Switch Layout ]"}, "Read-only gamepad button mapping reference"},
-    {"Button 1 (B)", 0, 1, {"Jump (B)"}, "Standard jump, release web swing, menu confirm"},
-    {"Button 2 (A)", 0, 1, {"Wall Crawl / Web (A)"}, "Stick to walls, wall crawl, sprint, menu cancel"},
+    {"Button 1 (B)", 0, 1, {"Jump (B)"}, "Jump, release web swing - also confirms in menus"},
+    {"Button 2 (A)", 0, 1, {"Wall Crawl / Web (A)"}, "Stick to walls, wall crawl, sprint - also cancels in menus"},
     {"Button 3 (Y)", 0, 1, {"Punch / Light (Y)"}, "Punch, light attack combos"},
     {"Button 4 (X)", 0, 1, {"Kick / Heavy (X)"}, "Kick, heavy attack combos"},
     {"Button 5 (L / ZL)", 0, 1, {"Web Zip (L / ZL)"}, "Quick web zip forward"},
     {"Button 6 (R / ZR)", 0, 1, {"Web Swing (R / ZR)"}, "Web swing, shoot web"},
+    {"Button 7 (\u2014)", 0, 1, {"(Unused)"}, "No action bound to Button 7"},
     {"Button 8 (Plus)", 0, 1, {"Pause Game (Plus)"}, "Pause menu and in-game options"},
     {"Button 9 (LS Click)", 0, 1, {"Open Map (LS Click)"}, "In-game city map overview (Left Stick click)"},
     {"Button 10 (RS Click)", 0, 1, {"Center Camera (RS Click)"}, "Reset camera behind Spider-Man (Right Stick click)"},
-    {"Minus (-)", 0, 1, {"SwitchWaker Overlay"}, "Toggle this settings overlay menu (exclusive)"}
+    {"Minus (-)", 0, 1, {"SwitchWaker Overlay"}, "Toggle this settings overlay menu (exclusive)"},
+    {"Move", 0, 1, {"Left Stick / D-Pad"}, "Run around the city - Left Stick or D-Pad"},
+    {"Look", 0, 1, {"Right Stick"}, "Rotate camera - Right Stick only. Camera invert lives in the game's Options menu"}
 };
 
 static MenuRow s_perf_rows[] = {
-    {"Frame rate cap", 1, 3, {"20 FPS", "30 FPS (Stock)", "40 FPS (Boost)"}, "Target game update rate"},
-    {"Frame Generation", 0, 2, {"Off", "On (+10 FPS Boost to 40)"}, "Synthesize 10 intermediate frames per sec to reach 40 FPS without blur"},
+    {"Frame rate cap", 1, 3, {"20 FPS", "30 FPS (Stock)", "40 FPS (Boost)"}, "Target game update rate - 40 FPS cap also enables frame generation"},
+    {"Frame Generation", 0, 2, {"Off", "On (+10 FPS Boost to 40)"}, "Synthesize 10 intermediate frames per sec to reach 40 FPS without blur (experimental)"},
     {"Display sync (VSync)", 1, 2, {"Off", "On (Double-buffered)"}, "Synchronize frame presentation"},
     {"FPS Counter", 0, 2, {"Hidden", "Visible"}, "On-screen frame rate overlay"},
     {"GPU Performance Profile", 0, 3, {"Stock (307 MHz)", "Boost (384 MHz)", "High (460 MHz)"}, "Official Nintendo GPU clock profile"},
@@ -71,29 +76,145 @@ static MenuRow s_qol_rows[] = {
 };
 
 static MenuRow s_system_rows[] = {
-    {"Save settings to SD", 0, 1, {"[ Press A to Save ]"}, "Save current options to settings.ini"},
-    {"Reset to player defaults", 0, 1, {"[ Press A to Reset ]"}, "Restore original factory defaults"},
-    {"Quit Game", 0, 1, {"[ Press A to Exit to Home ]"}, "Cleanly restore clocks and exit to Horizon OS"}
+    {"Save settings to SD", 0, 1, {"[ Press to Save ]"}, "Save current options to settings.ini"},
+    {"Reset all settings", 0, 1, {"[ Press to Reset ]"}, "Delete settings.ini and registry.txt - guest settings reset on next boot"},
+    {"Quit Game", 0, 1, {"[ Press to Exit ]"}, "Cleanly restore clocks and exit to Horizon OS"}
 };
 
 static MenuRow s_debug_rows[] = {
     {"Wireframe mode", 0, 2, {"Off", "On"}, "Render 3D scene in wireframe"},
     {"Write session log.txt", 0, 2, {"Off", "On"}, "Write detailed diagnostic logs to SD"},
-    {"Available Switch RAM", 0, 1, {"~3100 MB free"}, "Total Horizon application memory available"}
+    {"Test prompts", 0, 1, {"[ Show sample ]"}, "Show one sample prompt line with live Switch button names"}
 };
 
 static MenuRow* s_tab_rows[NUM_TABS] = {
     s_graphics_rows, s_controls_rows, s_perf_rows, s_qol_rows, s_system_rows, s_debug_rows
 };
 
-static int s_tab_counts[NUM_TABS] = {
-    (int)(sizeof(s_graphics_rows)/sizeof(s_graphics_rows[0])),
-    (int)(sizeof(s_controls_rows)/sizeof(s_controls_rows[0])),
-    (int)(sizeof(s_perf_rows)/sizeof(s_perf_rows[0])),
-    (int)(sizeof(s_qol_rows)/sizeof(s_qol_rows[0])),
-    (int)(sizeof(s_system_rows)/sizeof(s_system_rows[0])),
-    (int)(sizeof(s_debug_rows)/sizeof(s_debug_rows[0]))
+/* Grouped views over the unchanged model arrays.
+   A view entry >= 0 is an index into the tab's model array; < 0 is a section
+   header, shown as a banner and never selectable. Getters keep reading the
+   model by number, so grouping can never shift an index under them.
+   Controls model (16 rows): [0] Sensitivity, [1] Swap, [2] Map header,
+   [3] Button 1, [4] Button 2, [5] Button 3, [6] Button 4, [7] Button 5,
+   [8] Button 6, [9] Button 7, [10] Button 8 (Plus), [11] Button 9 (LS),
+   [12] Button 10 (RS), [13] Minus, [14] Move, [15] Look.
+   The Map header row [2] is not in the view: the group banners replace it. */
+#define HDR_MOVEMENT -1
+#define HDR_COMBAT   -2
+#define HDR_WEB      -3
+#define HDR_CAMERA   -4
+#define HDR_SYSTEM   -5
+#define HDR_PICTURE  -6
+#define HDR_CITY     -7
+#define HDR_SPEED    -8
+#define HDR_HARDWARE -9
+#define HDR_GENERAL  -10
+
+static const char* header_name(int h) {
+    switch (h) {
+        case HDR_MOVEMENT: return "MOVEMENT";
+        case HDR_COMBAT:   return "COMBAT";
+        case HDR_WEB:      return "WEB";
+        case HDR_CAMERA:   return "CAMERA";
+        case HDR_SYSTEM:   return "SYSTEM";
+        case HDR_PICTURE:  return "PICTURE";
+        case HDR_CITY:     return "CITY";
+        case HDR_SPEED:    return "SPEED";
+        case HDR_HARDWARE: return "HARDWARE";
+        case HDR_GENERAL:  return "GENERAL";
+        default: return "";
+    }
+}
+
+static const int8_t s_graphics_view[] = {
+    HDR_PICTURE, 3, 4, 5,
+    HDR_CITY, 0, 1, 2,
 };
+static const int8_t s_controls_view[] = {
+    HDR_MOVEMENT, 14,
+    HDR_COMBAT, 5, 6,
+    HDR_WEB, 4, 3, 7, 8, 9,
+    HDR_CAMERA, 15, 12, 0,
+    HDR_SYSTEM, 10, 11, 13, 1,
+};
+static const int8_t s_perf_view[] = {
+    HDR_SPEED, 0, 1, 2, 3,
+    HDR_HARDWARE, 4, 5,
+    HDR_CITY, 6,
+};
+static const int8_t s_qol_view[] = {
+    HDR_GENERAL, 0, 1,
+};
+static const int8_t s_system_view[] = {
+    HDR_GENERAL, 0, 1, 2,
+};
+static const int8_t s_debug_view[] = {
+    HDR_GENERAL, 0, 1, 2,
+};
+
+static const int8_t* s_tab_views[NUM_TABS] = {
+    s_graphics_view, s_controls_view, s_perf_view, s_qol_view, s_system_view, s_debug_view
+};
+
+static int s_tab_view_counts[NUM_TABS] = {
+    (int)(sizeof(s_graphics_view)/sizeof(s_graphics_view[0])),
+    (int)(sizeof(s_controls_view)/sizeof(s_controls_view[0])),
+    (int)(sizeof(s_perf_view)/sizeof(s_perf_view[0])),
+    (int)(sizeof(s_qol_view)/sizeof(s_qol_view[0])),
+    (int)(sizeof(s_system_view)/sizeof(s_system_view[0])),
+    (int)(sizeof(s_debug_view)/sizeof(s_debug_view[0]))
+};
+
+/* First selectable (non-header) view position of a tab. */
+static int view_first_selectable(int tab) {
+    const int8_t* v = s_tab_views[tab];
+    for (int i = 0; i < s_tab_view_counts[tab]; i++) {
+        if (v[i] >= 0) return i;
+    }
+    return 0;
+}
+
+/* Move g_row one selectable entry in dir (+1 down, -1 up), wrapping. */
+static void view_move(int dir) {
+    const int8_t* v = s_tab_views[g_tab];
+    int count = s_tab_view_counts[g_tab];
+    int pos = g_row;
+    for (int i = 0; i < count; i++) {
+        pos = (pos + dir + count) % count;
+        if (v[pos] >= 0) { g_row = pos; return; }
+    }
+}
+
+/* Overlay Confirm = the Jump button, Back = the Action button — the game's own
+   menu convention. With Swap OFF that is Confirm = B, Back = A; with Swap ON,
+   Confirm = A, Back = B. */
+static u64 confirm_btn(void) { return options_get_swap_ab() ? HidNpadButton_A : HidNpadButton_B; }
+static u64 back_btn(void)    { return options_get_swap_ab() ? HidNpadButton_B : HidNpadButton_A; }
+static char confirm_letter(void) { return options_get_swap_ab() ? 'A' : 'B'; }
+static char back_letter(void)    { return options_get_swap_ab() ? 'B' : 'A'; }
+
+/* Live Switch label for a game button, Swap-aware for Buttons 1/2 (input.c map).
+   Buttons 3..10 are fixed. The static opts[0] strings stay as fallbacks. */
+static void map_label(int button /* 1..10 */, char* out, size_t n) {
+    int swap = options_get_swap_ab();
+    switch (button) {
+        case 1:  snprintf(out, n, "Jump (%c)", swap ? 'A' : 'B'); break;
+        case 2:  snprintf(out, n, "Wall Crawl / Web (%c)", swap ? 'B' : 'A'); break;
+        case 3:  snprintf(out, n, "Punch / Light (Y)"); break;
+        case 4:  snprintf(out, n, "Kick / Heavy (X)"); break;
+        case 5:  snprintf(out, n, "Web Zip (L / ZL)"); break;
+        case 6:  snprintf(out, n, "Web Swing (R / ZR)"); break;
+        case 7:  snprintf(out, n, "(Unused)"); break;
+        case 8:  snprintf(out, n, "Pause Game (Plus)"); break;
+        case 9:  snprintf(out, n, "Open Map (LS Click)"); break;
+        case 10: snprintf(out, n, "Center Camera (RS Click)"); break;
+        default: snprintf(out, n, ""); break;
+    }
+}
+
+/* One-shot "Test prompts" sample line, shown via the status message. */
+static char s_test_line[160];
 
 static uint32_t s_status_timer = 0;
 static const char* s_status_msg = NULL;
@@ -101,6 +222,7 @@ static const char* s_status_msg = NULL;
 int options_menu_is_open(void) { return g_open; }
 void options_menu_toggle(void) {
     g_open = !g_open;
+    if (g_open) g_row = view_first_selectable(g_tab);
     vlog("options_menu: toggle called, now g_open = %d\n", g_open);
 }
 
@@ -206,25 +328,19 @@ int options_get_wireframe(void) {
     return (idx == 1);
 }
 
-int options_get_cam_invert_x(void) {
-    int idx = s_controls_rows[0].cur;
-    return (idx == 1);
-}
-
-int options_get_cam_invert_y(void) {
-    int idx = s_controls_rows[1].cur;
-    return (idx == 1);
-}
+/* Camera invert is owned by the game's own Options menu (Brandon's call,
+   §3.4 fallback) — there is no overlay invert setting any more, so the
+   overlay invert getters and the rx/ry flip in input.c are removed with it. */
 
 float options_get_sensitivity(void) {
     static const float s[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f};
-    int idx = s_controls_rows[2].cur;
+    int idx = s_controls_rows[0].cur;
     if (idx < 0 || idx >= 5) idx = 2;
     return s[idx];
 }
 
 int options_get_swap_ab(void) {
-    int idx = s_controls_rows[4].cur;
+    int idx = s_controls_rows[1].cur;
     return (idx == 1);
 }
 
@@ -236,11 +352,8 @@ static void reset_defaults(void) {
     s_graphics_rows[4].cur = 0; /* FXAA Off */
     s_graphics_rows[5].cur = 0; /* Bilinear */
 
-    s_controls_rows[0].cur = 0; /* Normal */
-    s_controls_rows[1].cur = 0; /* Normal */
-    s_controls_rows[2].cur = 2; /* 1.0x (Normal) */
-    s_controls_rows[3].cur = 1; /* On */
-    s_controls_rows[4].cur = 0; /* Off (B: Jump, A: Action) */
+    s_controls_rows[0].cur = 2; /* 1.0x (Normal) */
+    s_controls_rows[1].cur = 0; /* Off (B: Jump, A: Action) */
 
     s_perf_rows[0].cur = 1; /* 30 FPS (Stock) */
     s_perf_rows[1].cur = 0; /* Frame Gen Off */
@@ -259,7 +372,7 @@ static void reset_defaults(void) {
 
     s_debug_rows[0].cur = 0; /* Off */
     s_debug_rows[1].cur = 0; /* Off */
-    s_debug_rows[2].cur = 0;
+    s_debug_rows[2].cur = 0; /* Test prompts is one-shot, no stored state */
 }
 
 static void save_settings(void) {
@@ -278,8 +391,8 @@ static void save_settings(void) {
     fprintf(f, "[graphics]\nview_dist=%d\nfog=%d\nparticles=%d\nres=%d\nfxaa=%d\nsharpen=%d\n\n",
             s_graphics_rows[0].cur, s_graphics_rows[1].cur, s_graphics_rows[2].cur, s_graphics_rows[3].cur,
             s_graphics_rows[4].cur, s_graphics_rows[5].cur);
-    fprintf(f, "[controls]\ninvert_x=%d\ninvert_y=%d\nsens=%d\nrumble=%d\nswap_ab=%d\n\n",
-            s_controls_rows[0].cur, s_controls_rows[1].cur, s_controls_rows[2].cur, s_controls_rows[3].cur, s_controls_rows[4].cur);
+    fprintf(f, "[controls]\nsens=%d\nswap_ab=%d\n\n",
+            s_controls_rows[0].cur, s_controls_rows[1].cur);
     fprintf(f, "[performance]\nfps_cap=%d\nframe_gen=%d\nvsync=%d\nshow_fps=%d\ngpu_profile=%d\ncpu_clock=%d\ndensity=%d\n\n",
             s_perf_rows[0].cur, s_perf_rows[1].cur, s_perf_rows[2].cur, s_perf_rows[3].cur, s_perf_rows[4].cur, s_perf_rows[5].cur, s_perf_rows[6].cur);
     fprintf(f, "[qol]\nskip_intro=%d\nfast_map=%d\n\n",
@@ -310,16 +423,10 @@ static void load_settings(void) {
             if (v >= 0 && v < s_graphics_rows[4].num_opts) s_graphics_rows[4].cur = v;
         } else if (sscanf(line, "sharpen=%d", &v) == 1) {
             if (v >= 0 && v < s_graphics_rows[5].num_opts) s_graphics_rows[5].cur = v;
-        } else if (sscanf(line, "invert_x=%d", &v) == 1) {
-            if (v >= 0 && v < s_controls_rows[0].num_opts) s_controls_rows[0].cur = v;
-        } else if (sscanf(line, "invert_y=%d", &v) == 1) {
-            if (v >= 0 && v < s_controls_rows[1].num_opts) s_controls_rows[1].cur = v;
         } else if (sscanf(line, "sens=%d", &v) == 1) {
-            if (v >= 0 && v < s_controls_rows[2].num_opts) s_controls_rows[2].cur = v;
-        } else if (sscanf(line, "rumble=%d", &v) == 1) {
-            if (v >= 0 && v < s_controls_rows[3].num_opts) s_controls_rows[3].cur = v;
+            if (v >= 0 && v < s_controls_rows[0].num_opts) s_controls_rows[0].cur = v;
         } else if (sscanf(line, "swap_ab=%d", &v) == 1) {
-            if (v >= 0 && v < s_controls_rows[4].num_opts) s_controls_rows[4].cur = v;
+            if (v >= 0 && v < s_controls_rows[1].num_opts) s_controls_rows[1].cur = v;
         } else if (sscanf(line, "fps_cap=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[0].num_opts) s_perf_rows[0].cur = v;
         } else if (sscanf(line, "frame_gen=%d", &v) == 1) {
@@ -352,19 +459,25 @@ static void init_gui_gl(void);
 void options_menu_init(void) {
     reset_defaults();
     load_settings();
+    g_row = view_first_selectable(g_tab);
     options_apply_gpu_profile(s_perf_rows[4].cur);
     options_apply_cpu_clock(s_perf_rows[5].cur);
     init_gui_gl();
 }
 
 void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly) {
-    (void)kHeld;
     (void)lx;
     (void)ly;
-    if (!g_open) return;
+    /* Hold-to-repeat state for Up/Down navigation: first repeat after ~350 ms,
+       then every ~90 ms. Repeats apply to navigation only, never to Confirm. */
+    static uint64_t s_repeat_next = 0;
+    static int s_repeat_dir = 0;
+    if (!g_open) {
+        s_repeat_dir = 0;
+        return;
+    }
 
-    u64 back_btn = options_get_swap_ab() ? HidNpadButton_A : HidNpadButton_B;
-    if (kDown & back_btn) {
+    if (kDown & back_btn()) {
         g_open = 0;
         vlog("options_menu: closed by back button\n");
         return;
@@ -372,49 +485,79 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
 
     if (kDown & (HidNpadButton_L | HidNpadButton_ZL)) {
         g_tab = (g_tab + NUM_TABS - 1) % NUM_TABS;
-        g_row = 0;
+        g_row = view_first_selectable(g_tab);
     }
     if (kDown & (HidNpadButton_R | HidNpadButton_ZR)) {
         g_tab = (g_tab + 1) % NUM_TABS;
-        g_row = 0;
+        g_row = view_first_selectable(g_tab);
     }
 
-    int count = s_tab_counts[g_tab];
-    if (kDown & (HidNpadButton_Up | HidNpadButton_StickLUp)) {
-        g_row = (g_row + count - 1) % count;
-    }
-    if (kDown & (HidNpadButton_Down | HidNpadButton_StickLDown)) {
-        g_row = (g_row + 1) % count;
+    /* Up/Down: tap steps immediately; holding repeats after a delay. */
+    uint64_t now_ns = armTicksToNs(armGetSystemTick());
+    int step = 0;
+    if (kDown & (HidNpadButton_Up | HidNpadButton_StickLUp)) step = -1;
+    else if (kDown & (HidNpadButton_Down | HidNpadButton_StickLDown)) step = +1;
+    if (step != 0) {
+        s_repeat_dir = step;
+        s_repeat_next = now_ns + 350000000ull;
+        view_move(step);
+    } else {
+        int held_dir = 0;
+        if (kHeld & (HidNpadButton_Up | HidNpadButton_StickLUp)) held_dir = -1;
+        else if (kHeld & (HidNpadButton_Down | HidNpadButton_StickLDown)) held_dir = +1;
+        if (held_dir == 0) {
+            s_repeat_dir = 0;
+        } else if (held_dir != s_repeat_dir) {
+            s_repeat_dir = held_dir;
+            s_repeat_next = now_ns + 350000000ull;
+        } else if (now_ns >= s_repeat_next) {
+            view_move(held_dir);
+            s_repeat_next = now_ns + 90000000ull;
+        }
     }
 
-    MenuRow* r = &s_tab_rows[g_tab][g_row];
+    /* g_row is a view position; midx is the model index it points at.
+       All row actions compare the model index, never the view position. */
+    int midx = s_tab_views[g_tab][g_row];
+    MenuRow* r = &s_tab_rows[g_tab][midx];
     if (kDown & (HidNpadButton_Left | HidNpadButton_StickLLeft)) {
         if (r->num_opts > 1) {
             r->cur = (r->cur + r->num_opts - 1) % r->num_opts;
-            if (g_tab == TAB_PERF && g_row == 4) options_apply_gpu_profile(r->cur);
-            if (g_tab == TAB_PERF && g_row == 5) options_apply_cpu_clock(r->cur);
+            if (g_tab == TAB_PERF && midx == 4) options_apply_gpu_profile(r->cur);
+            if (g_tab == TAB_PERF && midx == 5) options_apply_cpu_clock(r->cur);
         }
     }
-    if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_A)) {
-        if (g_tab == TAB_SYSTEM && g_row == 0) {
+    if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | confirm_btn())) {
+        if (g_tab == TAB_SYSTEM && midx == 0) {
             save_settings();
             s_status_msg = "Settings saved to SD (settings.ini & resolution.txt)";
             s_status_timer = 120;
-        } else if (g_tab == TAB_SYSTEM && g_row == 1) {
+        } else if (g_tab == TAB_SYSTEM && midx == 1) {
             remove(USM_DIR "settings.ini");
+            remove(USM_DIR "registry.txt");
+            remove(USM_DIR "resolution.txt");
             reset_defaults();
             options_apply_gpu_profile(s_perf_rows[4].cur);
             options_apply_cpu_clock(s_perf_rows[5].cur);
-            s_status_msg = "Player defaults restored";
+            s_status_msg = "All settings reset - restart the game for guest settings to take effect";
             s_status_timer = 120;
-        } else if (g_tab == TAB_SYSTEM && g_row == 2) {
+        } else if (g_tab == TAB_SYSTEM && midx == 2) {
             vlog("options_menu: Quit Game confirmed by user -> exiting to Horizon OS\n");
             options_menu_cleanup();
             svcExitProcess();
+        } else if (g_tab == TAB_DEBUG && midx == 2) {
+            /* Test prompts: one-shot sample line with live Switch button names.
+               Word forms only — the overlay renderer draws its Aileron atlas,
+               not the game's Kenney glyphs; the real icons are verified by the
+               in-game tutorials themselves. */
+            snprintf(s_test_line, sizeof s_test_line,
+                     "PRESS %c TO JUMP - Y TO PUNCH - X TO KICK", confirm_letter());
+            s_status_msg = s_test_line;
+            s_status_timer = 300;
         } else if (r->num_opts > 1) {
             r->cur = (r->cur + 1) % r->num_opts;
-            if (g_tab == TAB_PERF && g_row == 4) options_apply_gpu_profile(r->cur);
-            if (g_tab == TAB_PERF && g_row == 5) options_apply_cpu_clock(r->cur);
+            if (g_tab == TAB_PERF && midx == 4) options_apply_gpu_profile(r->cur);
+            if (g_tab == TAB_PERF && midx == 5) options_apply_cpu_clock(r->cur);
         }
     }
 }
@@ -657,8 +800,9 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     }
 
     /* Solid shapes pass (mode = 0) */
-    /* Dark semi-transparent backdrop */
-    draw_rect(60.0f, 40.0f, screen_w - 120.0f, screen_h - 80.0f, 0.05f, 0.07f, 0.12f, 0.94f);
+    /* USM comic palette: dark green-tinted backdrop, red section banners,
+       orange titles, green active-row highlight. */
+    draw_rect(60.0f, 40.0f, screen_w - 120.0f, screen_h - 80.0f, 0.06f, 0.09f, 0.06f, 0.94f);
 
     /* Tab header bar */
     draw_rect(60.0f, 40.0f, screen_w - 120.0f, 54.0f, 0.09f, 0.13f, 0.22f, 0.98f);
@@ -666,20 +810,20 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     /* Active tab highlight */
     float tab_spacing = (screen_w - 160.0f) / NUM_TABS;
     float tab_x = 80.0f + g_tab * tab_spacing;
-    draw_rect(tab_x - 6.0f, 44.0f, tab_spacing - 8.0f, 46.0f, 0.18f, 0.38f, 0.72f, 0.95f);
+    draw_rect(tab_x - 6.0f, 44.0f, tab_spacing - 8.0f, 46.0f, 0.78f, 0.08f, 0.10f, 0.95f);
 
-    /* Active row highlight with vertical scrolling */
-    int count = s_tab_counts[g_tab];
+    /* Active row highlight with vertical scrolling (g_row is a view position) */
+    int count = s_tab_view_counts[g_tab];
     int max_vis = 11;
     int scroll_top = (g_row >= max_vis) ? (g_row - max_vis + 1) : 0;
     int end_vis = scroll_top + max_vis;
     if (end_vis > count) end_vis = count;
 
     float row_y = 120.0f + (g_row - scroll_top) * 42.0f;
-    draw_rect(75.0f, row_y - 4.0f, screen_w - 150.0f, 38.0f, 0.16f, 0.32f, 0.60f, 0.65f);
+    draw_rect(75.0f, row_y - 4.0f, screen_w - 150.0f, 38.0f, 0.12f, 0.55f, 0.22f, 0.65f);
 
     /* Bottom help box */
-    draw_rect(75.0f, screen_h - 110.0f, screen_w - 150.0f, 55.0f, 0.07f, 0.10f, 0.16f, 0.88f);
+    draw_rect(75.0f, screen_h - 110.0f, screen_w - 150.0f, 55.0f, 0.06f, 0.10f, 0.07f, 0.88f);
     flush_verts(0);
 
     /* Text pass (mode = 1) */
@@ -687,36 +831,60 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     for (int t = 0; t < NUM_TABS; t++) {
         float tx = 80.0f + t * tab_spacing;
         if (t == g_tab) {
-            draw_text(tx, 56.0f, 1.0f, kTabNames[t], 1.0f, 1.0f, 1.0f, 1.0f);
+            draw_text(tx, 56.0f, 1.0f, kTabNames[t], 1.0f, 0.62f, 0.10f, 1.0f);
         } else {
             draw_text(tx, 56.0f, 1.0f, kTabNames[t], 0.6f, 0.65f, 0.75f, 0.8f);
         }
     }
 
-    /* Draw visible rows in the current tab */
+    /* Draw visible rows in the current tab (view positions; headers are banners) */
     MenuRow* rows = s_tab_rows[g_tab];
+    const int8_t* view = s_tab_views[g_tab];
     for (int r = scroll_top; r < end_vis; r++) {
         float ry = 124.0f + (r - scroll_top) * 42.0f;
+        int entry = view[r];
+        if (entry < 0) {
+            /* Section header: full-width red banner, white title, no value. */
+            draw_rect(75.0f, ry - 4.0f, screen_w - 150.0f, 38.0f, 0.78f, 0.08f, 0.10f, 0.95f);
+            flush_verts(0);
+            draw_text(90.0f, ry, 0.95f, header_name(entry), 1.0f, 1.0f, 1.0f, 1.0f);
+            flush_verts(1);
+            continue;
+        }
         int active = (r == g_row);
         float cr = active ? 1.0f : 0.82f;
         float cg = active ? 1.0f : 0.85f;
         float cb = active ? 1.0f : 0.90f;
 
-        draw_text(90.0f, ry, 0.95f, rows[r].name, cr, cg, cb, 1.0f);
+        draw_text(90.0f, ry, 0.95f, rows[entry].name, cr, cg, cb, 1.0f);
 
-        /* Value / choice */
-        int cur_val = rows[r].cur;
-        if (cur_val >= 0 && cur_val < rows[r].num_opts) {
-            char val_buf[64];
-            if (rows[r].num_opts > 1) {
-                snprintf(val_buf, sizeof val_buf, "<  %s  >", rows[r].opts[cur_val]);
-            } else {
-                snprintf(val_buf, sizeof val_buf, "%s", rows[r].opts[cur_val]);
+        /* Value / choice: System rows and the Controller Map are built live
+           from the current buttons so Swap is always reflected. */
+        char val_buf[64];
+        const char* val_str = NULL;
+        if (g_tab == TAB_SYSTEM) {
+            const char* verb = (entry == 0) ? "Save" : (entry == 1) ? "Reset" : "Exit";
+            snprintf(val_buf, sizeof val_buf, "[ Press %c to %s ]", confirm_letter(), verb);
+            val_str = val_buf;
+        } else if (g_tab == TAB_CONTROLS && entry >= 3 && entry <= 12) {
+            map_label(entry - 2, val_buf, sizeof val_buf);
+            val_str = val_buf;
+        } else {
+            int cur_val = rows[entry].cur;
+            if (cur_val >= 0 && cur_val < rows[entry].num_opts) {
+                if (rows[entry].num_opts > 1) {
+                    snprintf(val_buf, sizeof val_buf, "<  %s  >", rows[entry].opts[cur_val]);
+                } else {
+                    snprintf(val_buf, sizeof val_buf, "%s", rows[entry].opts[cur_val]);
+                }
+                val_str = val_buf;
             }
+        }
+        if (val_str) {
             float vr = active ? 0.35f : 0.70f;
             float vg = active ? 0.85f : 0.75f;
             float vb = active ? 1.00f : 0.85f;
-            draw_text(screen_w - 480.0f, ry, 0.95f, val_buf, vr, vg, vb, 1.0f);
+            draw_text(screen_w - 480.0f, ry, 0.95f, val_str, vr, vg, vb, 1.0f);
         }
     }
 
@@ -728,9 +896,10 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         draw_text(screen_w / 2 - 20.0f, 120.0f + max_vis * 42.0f, 0.8f, "v More v", 0.5f, 0.8f, 1.0f, 0.7f);
     }
 
-    /* Help text */
-    if (g_row >= 0 && g_row < count && rows[g_row].help) {
-        draw_text(90.0f, screen_h - 96.0f, 0.85f, rows[g_row].help, 0.85f, 0.90f, 0.95f, 0.95f);
+    /* Help text (model row the selected view entry points at) */
+    int help_entry = view[g_row];
+    if (help_entry >= 0 && rows[help_entry].help) {
+        draw_text(90.0f, screen_h - 96.0f, 0.85f, rows[help_entry].help, 0.85f, 0.90f, 0.95f, 0.95f);
     }
 
     /* Status message */
@@ -739,10 +908,14 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         draw_text(screen_w - 460.0f, screen_h - 70.0f, 0.85f, s_status_msg, 0.3f, 1.0f, 0.4f, 1.0f);
     }
 
-    /* Controller guide footer */
-    draw_text(90.0f, screen_h - 30.0f, 0.75f,
-              "L/R, ZL/ZR: Switch Tabs  |  D-Pad/Stick: Navigate  |  Left/Right, A: Change Value  |  B: Close Menu",
-              0.55f, 0.60f, 0.70f, 0.9f);
+    /* Controller guide footer, built live from the Confirm/Back buttons. */
+    {
+        char footer_buf[160];
+        snprintf(footer_buf, sizeof footer_buf,
+                 "L/R: Switch Tabs  |  D-Pad/Stick: Navigate  |  Left/Right, %c: Change Value  |  %c: Close Menu",
+                 confirm_letter(), back_letter());
+        draw_text(90.0f, screen_h - 30.0f, 0.75f, footer_buf, 0.55f, 0.60f, 0.70f, 0.9f);
+    }
 
     flush_verts(1);
 
