@@ -57,7 +57,15 @@ static uint32_t load_exe(void) {
         if (f) vlog("found USM.exe in " USM_DIR "\n");
     }
     if (!f) {
-        vlog("cannot open USM.exe in romfs:/ or " USM_DIR "\n");
+        /* NRO install (README Method B): USM.exe sits next to the NRO in
+           sdmc:/switch/usm/. The NSP build loads from romfs:/ or save:/
+           above; as an NRO, save:/ mounts the NSP title's save data, which
+           never holds USM.exe, so fall back to the SD folder. */
+        f = fopen("sdmc:/switch/usm/USM.exe", "rb");
+        if (f) vlog("found USM.exe in sdmc:/switch/usm/\n");
+    }
+    if (!f) {
+        vlog("cannot open USM.exe in romfs:/, " USM_DIR " or sdmc:/switch/usm/\n");
         return 0;
     }
     fseek(f, 0, SEEK_END);
@@ -213,7 +221,7 @@ int main(int argc, char* argv[]) {
 
     uint32_t entry = load_exe();
     if (!entry) {
-        fatal("Cannot load USM.exe from romfs:/ or " USM_DIR "USM.exe");
+        fatal("Cannot load USM.exe from romfs:/, " USM_DIR "or sdmc:/switch/usm/USM.exe");
     }
 
     GameThreadArgs args = { entry, 0 };
