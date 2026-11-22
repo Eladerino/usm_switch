@@ -213,6 +213,25 @@ static void map_label(int button /* 1..10 */, char* out, size_t n) {
     }
 }
 
+/* Live Switch name for a game button, Swap-aware for Buttons 1/2 -- the row
+   names the Controller Map draws, so they flip with the values (map_label). */
+static void map_name(int button /* 1..10 */, char* out, size_t n) {
+    int swap = options_get_swap_ab();
+    switch (button) {
+        case 1:  snprintf(out, n, "Button 1 (%c)", swap ? 'A' : 'B'); break;
+        case 2:  snprintf(out, n, "Button 2 (%c)", swap ? 'B' : 'A'); break;
+        case 3:  snprintf(out, n, "Button 3 (Y)"); break;
+        case 4:  snprintf(out, n, "Button 4 (X)"); break;
+        case 5:  snprintf(out, n, "Button 5 (L / ZL)"); break;
+        case 6:  snprintf(out, n, "Button 6 (R / ZR)"); break;
+        case 7:  snprintf(out, n, "Button 7 (\u2014)"); break;
+        case 8:  snprintf(out, n, "Button 8 (Plus)"); break;
+        case 9:  snprintf(out, n, "Button 9 (LS Click)"); break;
+        case 10: snprintf(out, n, "Button 10 (RS Click)"); break;
+        default: snprintf(out, n, ""); break;
+    }
+}
+
 /* One-shot "Test prompts" sample line, shown via the status message. */
 static char s_test_line[160];
 
@@ -845,6 +864,10 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         int entry = view[r];
         if (entry < 0) {
             /* Section header: full-width red banner, white title, no value. */
+            /* Flush pending text (mode 1) BEFORE adding the banner rect: the
+               vertex buffer is shared, and a mode-0 flush would draw every
+               glyph quad queued since the last flush as a solid bar. */
+            flush_verts(1);
             draw_rect(75.0f, ry - 4.0f, screen_w - 150.0f, 38.0f, 0.78f, 0.08f, 0.10f, 0.95f);
             flush_verts(0);
             draw_text(90.0f, ry, 0.95f, header_name(entry), 1.0f, 1.0f, 1.0f, 1.0f);
@@ -856,7 +879,15 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         float cg = active ? 1.0f : 0.85f;
         float cb = active ? 1.0f : 0.90f;
 
-        draw_text(90.0f, ry, 0.95f, rows[entry].name, cr, cg, cb, 1.0f);
+        /* Controller Map row names are built live (map_name) so they flip
+           under Swap exactly like their values (map_label) do. */
+        char name_buf[32];
+        const char* name_str = rows[entry].name;
+        if (g_tab == TAB_CONTROLS && entry >= 3 && entry <= 12) {
+            map_name(entry - 2, name_buf, sizeof name_buf);
+            name_str = name_buf;
+        }
+        draw_text(90.0f, ry, 0.95f, name_str, cr, cg, cb, 1.0f);
 
         /* Value / choice: System rows and the Controller Map are built live
            from the current buttons so Swap is always reflected. */
