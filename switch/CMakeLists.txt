@@ -30,7 +30,18 @@ add_executable(usm_switch.elf
     ${SWITCH_SRC}
 )
 
+# Build stamp for the overlay's System > Build row, regenerated every build.
+set(USM_BUILD_INFO ${CMAKE_CURRENT_BINARY_DIR}/usm_build_info.h)
+add_custom_target(usm_build_info ALL
+    COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/.. -DOUT=${USM_BUILD_INFO}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/build_info.cmake
+    BYPRODUCTS ${USM_BUILD_INFO}
+    COMMENT "Stamping build commit"
+)
+add_dependencies(usm_switch.elf usm_build_info)
+
 target_include_directories(usm_switch.elf PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
     ${SRC}/recomp
     ${SRC}/recomp/gen
     ${SRC}/switch

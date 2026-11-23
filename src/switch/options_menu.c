@@ -9,6 +9,13 @@
 #include <string.h>
 #include "menu_font.h"
 #include "usm_switch.h"
+/* Generated every build by switch/build_info.cmake: USM_BUILD_SHA and
+   USM_BUILD_BRANCH, when git was available. Absent in other builds. */
+#if defined(__has_include)
+#if __has_include("usm_build_info.h")
+#include "usm_build_info.h"
+#endif
+#endif
 
 static int g_open = 0;
 static int g_tab = 0;
