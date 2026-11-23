@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 void gl_bind_main_vao(void);
+unsigned int gl_icon_texture(void);  /* gl.c: the button-icon atlas (glyphs.h), 0 before gl init */
 
 void options_menu_init(void);
 void options_menu_cleanup(void);

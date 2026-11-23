@@ -224,16 +224,19 @@ static char confirm_letter(void) { return options_get_swap_ab() ? 'A' : 'B'; }
 static char back_letter(void)    { return options_get_swap_ab() ? 'B' : 'A'; }
 
 /* Live Switch label for a game button, Swap-aware for Buttons 1/2 (input.c map).
-   Buttons 3..10 are fixed. The static opts[0] strings stay as fallbacks. */
+   Buttons 3..10 are fixed. The static opts[0] strings stay as fallbacks.
+   {(B)} is a button-icon token: drawn as the Kenney icon when the icon
+   texture is available, as the text "(B)" otherwise (see draw_text_shear).
+   Plus and the stick clicks have no icon slot yet, so they stay words. */
 static void map_label(int button /* 1..10 */, char* out, size_t n) {
     int swap = options_get_swap_ab();
     switch (button) {
-        case 1:  snprintf(out, n, "Jump (%c)", swap ? 'A' : 'B'); break;
-        case 2:  snprintf(out, n, "Wall Crawl / Web (%c)", swap ? 'B' : 'A'); break;
-        case 3:  snprintf(out, n, "Punch / Light (Y)"); break;
-        case 4:  snprintf(out, n, "Kick / Heavy (X)"); break;
-        case 5:  snprintf(out, n, "Web Zip (L / ZL)"); break;
-        case 6:  snprintf(out, n, "Web Swing (R / ZR)"); break;
+        case 1:  snprintf(out, n, "Jump {(%c)}", swap ? 'A' : 'B'); break;
+        case 2:  snprintf(out, n, "Wall Crawl / Web {(%c)}", swap ? 'B' : 'A'); break;
+        case 3:  snprintf(out, n, "Punch / Light {(Y)}"); break;
+        case 4:  snprintf(out, n, "Kick / Heavy {(X)}"); break;
+        case 5:  snprintf(out, n, "Web Zip {(L)} / ZL"); break;
+        case 6:  snprintf(out, n, "Web Swing {(R)} / ZR"); break;
         case 7:  snprintf(out, n, "(Unused)"); break;
         case 8:  snprintf(out, n, "Pause Game (Plus)"); break;
         case 9:  snprintf(out, n, "Open Map (LS Click)"); break;
@@ -247,12 +250,12 @@ static void map_label(int button /* 1..10 */, char* out, size_t n) {
 static void map_name(int button /* 1..10 */, char* out, size_t n) {
     int swap = options_get_swap_ab();
     switch (button) {
-        case 1:  snprintf(out, n, "Button 1 (%c)", swap ? 'A' : 'B'); break;
-        case 2:  snprintf(out, n, "Button 2 (%c)", swap ? 'B' : 'A'); break;
-        case 3:  snprintf(out, n, "Button 3 (Y)"); break;
-        case 4:  snprintf(out, n, "Button 4 (X)"); break;
-        case 5:  snprintf(out, n, "Button 5 (L / ZL)"); break;
-        case 6:  snprintf(out, n, "Button 6 (R / ZR)"); break;
+        case 1:  snprintf(out, n, "Button 1 {(%c)}", swap ? 'A' : 'B'); break;
+        case 2:  snprintf(out, n, "Button 2 {(%c)}", swap ? 'B' : 'A'); break;
+        case 3:  snprintf(out, n, "Button 3 {(Y)}"); break;
+        case 4:  snprintf(out, n, "Button 4 {(X)}"); break;
+        case 5:  snprintf(out, n, "Button 5 {(L)} / ZL"); break;
+        case 6:  snprintf(out, n, "Button 6 {(R)} / ZR"); break;
         case 7:  snprintf(out, n, "Button 7 (-)"); break;
         case 8:  snprintf(out, n, "Button 8 (Plus)"); break;
         case 9:  snprintf(out, n, "Button 9 (LS Click)"); break;
@@ -628,7 +631,7 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
         if (s_armed_row != row_key || now > s_armed_until) {
             s_armed_row = row_key;
             s_armed_until = now + 2000000000ull;
-            snprintf(s_arm_msg, sizeof s_arm_msg, "Press %c again to %s",
+            snprintf(s_arm_msg, sizeof s_arm_msg, "Press {%c} again to %s",
                      confirm_letter(), midx == 1 ? "reset all settings" : "quit the game");
             set_status(s_arm_msg, 2000);
             return;
@@ -653,7 +656,7 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
     } else if (g_tab == TAB_DEBUG && midx == 2) {
         /* Test prompts: one-shot sample line with live Switch button names. */
         snprintf(s_test_line, sizeof s_test_line,
-                 "PRESS %c TO JUMP - Y TO PUNCH - X TO KICK", confirm_letter());
+                 "PRESS {%c} TO JUMP - {Y} TO PUNCH - {X} TO KICK", confirm_letter());
         set_status(s_test_line, 10000);
     } else {
         change_value(r, midx, +1);
@@ -822,12 +825,80 @@ static void draw_rect(float x, float y, float w, float h, float r, float g, floa
 /* Fake italic: the top verts shift +shear in x, the bottom verts stay, so the
    glyph leans right. Advance widths are unchanged, so text_width() still
    matches. shear 0 is upright text. */
+/* Button icons (A1): the game's own prompt atlas (glyphs.h, Kenney Input
+   Prompts, CC0), already uploaded by gl.c, so the overlay adds no texture.
+   Slots: 0 B, 1 A, 2 Y, 3 X, 4 L, 5 R. Icon quads are queued apart from the
+   glyph quads and drawn in one batch at the end of the frame, with the icon
+   texture bound. 0 = no texture: tokens fall back to text. */
+#define ICON_SLOTS 8
+static GLuint s_icon_tex = 0;
+static MenuVert s_icon_verts[64 * 6];
+static int s_icon_count = 0;
+
+static int icon_slot(char c) {
+    switch (c) {
+        case 'B': return 0; case 'A': return 1; case 'Y': return 2;
+        case 'X': return 3; case 'L': return 4; case 'R': return 5;
+        default: return -1;
+    }
+}
+
+/* Parses an icon token at str ("{B}" or "{(B)}"). Returns its length and the
+   slot, and the text to draw instead when there is no icon texture. */
+static int parse_token(const char* str, int* slot, char* fallback) {
+    if (str[0] != '{') return 0;
+    int paren = str[1] == '(';
+    const char* p = str + 1 + paren;
+    int sl = icon_slot(p[0]);
+    if (sl < 0) return 0;
+    if (paren && p[1] != ')') return 0;
+    const char* end = p + 1 + paren;
+    if (*end != '}') return 0;
+    *slot = sl;
+    if (paren) { fallback[0] = '('; fallback[1] = p[0]; fallback[2] = ')'; fallback[3] = 0; }
+    else       { fallback[0] = p[0]; fallback[1] = 0; }
+    return (int)(end - str) + 1;
+}
+
+static float icon_size(float scale) { return (float)MENU_FONT_H * scale * 0.9f; }
+
+static void queue_icon(float x, float y, float size, int slot, float a) {
+    if (s_icon_count + 6 > (int)(sizeof s_icon_verts / sizeof s_icon_verts[0])) return;
+    float u0 = (float)slot / ICON_SLOTS, u1 = (float)(slot + 1) / ICON_SLOTS;
+    MenuVert* v = &s_icon_verts[s_icon_count];
+    v[0] = (MenuVert){x, y, u0, 0, 1, 1, 1, a};
+    v[1] = (MenuVert){x + size, y, u1, 0, 1, 1, 1, a};
+    v[2] = (MenuVert){x, y + size, u0, 1, 1, 1, 1, a};
+    v[3] = (MenuVert){x + size, y, u1, 0, 1, 1, 1, a};
+    v[4] = (MenuVert){x + size, y + size, u1, 1, 1, 1, 1, a};
+    v[5] = (MenuVert){x, y + size, u0, 1, 1, 1, 1, a};
+    s_icon_count += 6;
+}
+
+/* Fake italic: the top verts shift +shear in x, the bottom verts stay, so the
+   glyph leans right. Advance widths are unchanged, so text_width() still
+   matches. shear 0 is upright text. Icon tokens become icons (upright). */
 static void draw_text_shear(float x, float y, float scale, const char* str,
                             float r, float g, float b, float a, float shear) {
     if (!str) return;
     float cur_x = x;
     float gh = (float)MENU_FONT_H * scale;
     while (*str) {
+        int slot; char fb[4];
+        int tl = parse_token(str, &slot, fb);
+        if (tl) {
+            str += tl;
+            if (s_icon_tex) {
+                float sz = icon_size(scale);
+                if (a > 0.5f && !(r == 0.0f && g == 0.0f && b == 0.0f))  /* not in outline passes */
+                    queue_icon(cur_x, y + (gh - sz) * 0.5f, sz, slot, a);
+                cur_x += sz + 1.0f * scale;
+            } else {
+                draw_text_shear(cur_x, y, scale, fb, r, g, b, a, shear);
+                for (const char* f = fb; *f; f++) cur_x += (float)menu_font_w[*f - 32] * scale + 1.0f * scale;
+            }
+            continue;
+        }
         unsigned char c = (unsigned char)*str++;
         if (c < 32 || c > 126) c = 32;
         int idx = c - 32;
@@ -858,6 +929,14 @@ static float text_width(const char* str, float scale) {
     if (!str) return 0.0f;
     float w = 0.0f;
     while (*str) {
+        int slot; char fb[4];
+        int tl = parse_token(str, &slot, fb);
+        if (tl) {
+            str += tl;
+            if (s_icon_tex) w += icon_size(scale) + 1.0f * scale;
+            else for (const char* f = fb; *f; f++) w += (float)menu_font_w[*f - 32] * scale + 1.0f * scale;
+            continue;
+        }
         unsigned char c = (unsigned char)*str++;
         if (c < 32 || c > 126) c = 32;
         w += (float)menu_font_w[c - 32] * scale + 1.0f * scale;
@@ -936,6 +1015,8 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     if (!g_open && !options_show_fps()) return;
 
     init_gui_gl();
+    s_icon_tex = gl_icon_texture();
+    s_icon_count = 0;
 
     glBindVertexArray(s_vao);
     glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
@@ -1071,7 +1152,7 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         const char* val_str = NULL;
         if (g_tab == TAB_SYSTEM && entry <= 2) {
             const char* verb = (entry == 0) ? "Save" : (entry == 1) ? "Reset" : "Exit";
-            snprintf(val_buf, sizeof val_buf, "[ Press %c to %s ]", confirm_letter(), verb);
+            snprintf(val_buf, sizeof val_buf, "[ Press {%c} to %s ]", confirm_letter(), verb);
             val_str = val_buf;
         } else if (g_tab == TAB_SYSTEM && entry == 3) {
 #ifdef USM_BUILD_SHA
@@ -1128,7 +1209,7 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     {
         char footer_buf[160];
         snprintf(footer_buf, sizeof footer_buf,
-                 "L/R: Switch Tabs  |  D-Pad/Stick: Navigate  |  Left/Right, %c: Change Value  |  %c: Close Menu",
+                 "{L}/{R}: Switch Tabs  |  D-Pad/Stick: Navigate  |  Left/Right, {%c}: Change Value  |  {%c}: Close Menu",
                  confirm_letter(), back_letter());
         float fs = 0.8f, avail = sw - 180.0f, fw = text_width(footer_buf, fs);
         if (fw > avail) fs *= avail / fw;
@@ -1136,6 +1217,16 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     }
 
     flush_verts(1);
+
+    /* Icons last, in one batch, with the icon atlas bound. */
+    if (s_icon_count && s_icon_tex) {
+        memcpy(s_verts, s_icon_verts, (size_t)s_icon_count * sizeof(MenuVert));
+        s_vert_count = s_icon_count;
+        glBindTexture(GL_TEXTURE_2D, s_icon_tex);
+        flush_verts(1);
+        glBindTexture(GL_TEXTURE_2D, s_font_tex);
+    }
+    s_icon_count = 0;
 
     cleanup_gui_gl_state();
 }
