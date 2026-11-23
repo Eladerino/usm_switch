@@ -51,11 +51,11 @@ static MenuRow s_controls_rows[] = {
     {"Button 4 (X)", 0, 1, {"Kick / Heavy (X)"}, "Kick, heavy attack combos"},
     {"Button 5 (L / ZL)", 0, 1, {"Web Zip (L / ZL)"}, "Quick web zip forward"},
     {"Button 6 (R / ZR)", 0, 1, {"Web Swing (R / ZR)"}, "Web swing, shoot web"},
-    {"Button 7 (\u2014)", 0, 1, {"(Unused)"}, "No action bound to Button 7"},
+    {"Button 7 (-)", 0, 1, {"(Unused)"}, "No action bound to Button 7"},
     {"Button 8 (Plus)", 0, 1, {"Pause Game (Plus)"}, "Pause menu and in-game options"},
     {"Button 9 (LS Click)", 0, 1, {"Open Map (LS Click)"}, "In-game city map overview (Left Stick click)"},
     {"Button 10 (RS Click)", 0, 1, {"Center Camera (RS Click)"}, "Reset camera behind Spider-Man (Right Stick click)"},
-    {"Minus (-)", 0, 1, {"SwitchWaker Overlay"}, "Toggle this settings overlay menu (exclusive)"},
+    {"Minus (-)", 0, 1, {"This overlay menu"}, "Open or close this overlay - L/R or ZL/ZR switch tabs"},
     {"Move", 0, 1, {"Left Stick / D-Pad"}, "Run around the city - Left Stick or D-Pad"},
     {"Look", 0, 1, {"Right Stick"}, "Rotate camera - Right Stick only. Camera invert lives in the game's Options menu"}
 };
@@ -78,13 +78,24 @@ static MenuRow s_qol_rows[] = {
 static MenuRow s_system_rows[] = {
     {"Save settings to SD", 0, 1, {"[ Press to Save ]"}, "Save current options to settings.ini"},
     {"Reset all settings", 0, 1, {"[ Press to Reset ]"}, "Delete settings.ini and registry.txt - guest settings reset on next boot"},
-    {"Quit Game", 0, 1, {"[ Press to Exit ]"}, "Cleanly restore clocks and exit to Horizon OS"}
+    {"Quit Game", 0, 1, {"[ Press to Exit ]"}, "Cleanly restore clocks and exit to Horizon OS"},
+    /* SESSION (model 3..5): read-only. num_opts == 1, and the System action
+       branch in options_menu_update only fires on 0..2. Values are built
+       live in options_menu_render. */
+    {"Build", 0, 1, {"-"}, "Commit this build was made from (read-only)"},
+    {"Clocks", 0, 1, {"-"}, "Selected CPU/GPU profiles, set on the Performance tab (read-only)"},
+    /* Plain file name until the NRO/NSP USM_DIR switch lands: the full
+       save:/ path would be wrong for NRO users. */
+    {"Settings file", 0, 1, {"settings.ini"}, "Holds these settings - registry.txt and resolution.txt sit beside it (read-only)"}
 };
 
 static MenuRow s_debug_rows[] = {
     {"Wireframe mode", 0, 2, {"Off", "On"}, "Render 3D scene in wireframe"},
     {"Write session log.txt", 0, 2, {"Off", "On"}, "Write detailed diagnostic logs to SD"},
-    {"Test prompts", 0, 1, {"[ Show sample ]"}, "Show one sample prompt line with live Switch button names"}
+    {"Test prompts", 0, 1, {"[ Show sample ]"}, "Show one sample prompt line with live Switch button names"},
+    /* RUNTIME (model 3..4): read-only, values built live from s_fps. */
+    {"FPS", 0, 1, {"-"}, "Presented frames per second, generated frames included (read-only)"},
+    {"Frame time", 0, 1, {"-"}, "Average time between presented frames (read-only)"}
 };
 
 static MenuRow* s_tab_rows[NUM_TABS] = {
@@ -110,6 +121,8 @@ static MenuRow* s_tab_rows[NUM_TABS] = {
 #define HDR_SPEED    -8
 #define HDR_HARDWARE -9
 #define HDR_GENERAL  -10
+#define HDR_SESSION  -11
+#define HDR_RUNTIME  -12
 
 static const char* header_name(int h) {
     switch (h) {
@@ -123,6 +136,8 @@ static const char* header_name(int h) {
         case HDR_SPEED:    return "SPEED";
         case HDR_HARDWARE: return "HARDWARE";
         case HDR_GENERAL:  return "GENERAL";
+        case HDR_SESSION:  return "SESSION";
+        case HDR_RUNTIME:  return "RUNTIME";
         default: return "";
     }
 }
@@ -140,17 +155,18 @@ static const int8_t s_controls_view[] = {
 };
 static const int8_t s_perf_view[] = {
     HDR_SPEED, 0, 1, 2, 3,
-    HDR_HARDWARE, 4, 5,
-    HDR_CITY, 6,
+    HDR_HARDWARE, 4, 5, 6,
 };
 static const int8_t s_qol_view[] = {
     HDR_GENERAL, 0, 1,
 };
 static const int8_t s_system_view[] = {
     HDR_GENERAL, 0, 1, 2,
+    HDR_SESSION, 3, 4, 5,
 };
 static const int8_t s_debug_view[] = {
     HDR_GENERAL, 0, 1, 2,
+    HDR_RUNTIME, 3, 4,
 };
 
 static const int8_t* s_tab_views[NUM_TABS] = {
@@ -175,13 +191,19 @@ static int view_first_selectable(int tab) {
     return 0;
 }
 
-/* Move g_row one selectable entry in dir (+1 down, -1 up), wrapping. */
-static void view_move(int dir) {
+/* Move g_row one selectable entry in dir (+1 down, -1 up). Taps wrap; a held
+   repeat (wrap = 0) stops at the first/last selectable entry instead, so
+   holding Down through the long Controls list can't fly past the end. */
+static void view_move(int dir, int wrap) {
     const int8_t* v = s_tab_views[g_tab];
     int count = s_tab_view_counts[g_tab];
     int pos = g_row;
     for (int i = 0; i < count; i++) {
-        pos = (pos + dir + count) % count;
+        pos += dir;
+        if (pos < 0 || pos >= count) {
+            if (!wrap) return;
+            pos = (pos + count) % count;
+        }
         if (v[pos] >= 0) { g_row = pos; return; }
     }
 }
@@ -224,7 +246,7 @@ static void map_name(int button /* 1..10 */, char* out, size_t n) {
         case 4:  snprintf(out, n, "Button 4 (X)"); break;
         case 5:  snprintf(out, n, "Button 5 (L / ZL)"); break;
         case 6:  snprintf(out, n, "Button 6 (R / ZR)"); break;
-        case 7:  snprintf(out, n, "Button 7 (\u2014)"); break;
+        case 7:  snprintf(out, n, "Button 7 (-)"); break;
         case 8:  snprintf(out, n, "Button 8 (Plus)"); break;
         case 9:  snprintf(out, n, "Button 9 (LS Click)"); break;
         case 10: snprintf(out, n, "Button 10 (RS Click)"); break;
@@ -235,13 +257,27 @@ static void map_name(int button /* 1..10 */, char* out, size_t n) {
 /* One-shot "Test prompts" sample line, shown via the status message. */
 static char s_test_line[160];
 
-static uint32_t s_status_timer = 0;
+static uint64_t now_ns(void) { return armTicksToNs(armGetSystemTick()); }
+
+/* Status line: shown in place of the help text until s_status_until. */
+static uint64_t s_status_until = 0;
 static const char* s_status_msg = NULL;
+static void set_status(const char* msg, uint32_t ms) {
+    s_status_msg = msg;
+    s_status_until = now_ns() + (uint64_t)ms * 1000000ull;
+}
+
+/* GPU/CPU rows apply on release (see options_menu_update). */
+static void apply_pending_clocks(void);
+
+/* Remembered row per tab (view position), -1 = first selectable. */
+static int g_row_per_tab[NUM_TABS] = {-1, -1, -1, -1, -1, -1};
 
 int options_menu_is_open(void) { return g_open; }
 void options_menu_toggle(void) {
     g_open = !g_open;
-    if (g_open) g_row = view_first_selectable(g_tab);
+    if (!g_open) apply_pending_clocks();
+    /* g_row is kept across close/open: reopening lands on the last row. */
     vlog("options_menu: toggle called, now g_open = %d\n", g_open);
 }
 
@@ -484,100 +520,137 @@ void options_menu_init(void) {
     init_gui_gl();
 }
 
+/* GPU/CPU rows: each step used to call apm/clkrst immediately, so a held
+   Left/Right would re-clock at ~11 Hz and every change can hitch a frame.
+   Now the displayed value cycles while held and the clock is set once,
+   when Left/Right are released (or the menu closes, or the tab changes). */
+static int s_pending_gpu = 0, s_pending_cpu = 0;
+static void apply_pending_clocks(void) {
+    if (s_pending_gpu) { s_pending_gpu = 0; options_apply_gpu_profile(s_perf_rows[4].cur); }
+    if (s_pending_cpu) { s_pending_cpu = 0; options_apply_cpu_clock(s_perf_rows[5].cur); }
+}
+
+/* Two-press actions (Reset, Quit): the first Confirm arms, a second within
+   2 s fires. Any navigation disarms. */
+static int s_armed_row = -1;
+static uint64_t s_armed_until = 0;
+static char s_arm_msg[64];
+
+static void change_tab(int dir) {
+    apply_pending_clocks();
+    g_row_per_tab[g_tab] = g_row;
+    g_tab = (g_tab + dir + NUM_TABS) % NUM_TABS;
+    g_row = g_row_per_tab[g_tab] >= 0 ? g_row_per_tab[g_tab] : view_first_selectable(g_tab);
+    s_armed_row = -1;
+}
+
+static void change_value(MenuRow* r, int midx, int dir) {
+    if (r->num_opts <= 1) return;
+    r->cur = (r->cur + dir + r->num_opts) % r->num_opts;
+    if (g_tab == TAB_PERF && midx == 4) s_pending_gpu = 1;
+    if (g_tab == TAB_PERF && midx == 5) s_pending_cpu = 1;
+}
+
+#define BTN_UP    (HidNpadButton_Up | HidNpadButton_StickLUp)
+#define BTN_DOWN  (HidNpadButton_Down | HidNpadButton_StickLDown)
+#define BTN_LEFT  (HidNpadButton_Left | HidNpadButton_StickLLeft)
+#define BTN_RIGHT (HidNpadButton_Right | HidNpadButton_StickLRight)
+#define REPEAT_DELAY_NS 350000000ull
+#define REPEAT_RATE_NS   90000000ull
+
+/* Tap = one step now; hold = repeat after REPEAT_DELAY, then every
+   REPEAT_RATE. Returns the step to take this poll (0 = none) and whether
+   it came from a repeat (*rep = 1) rather than a tap. */
+static int repeat_axis(uint64_t kDown, uint64_t kHeld, u64 neg, u64 pos,
+                       int* dir_state, uint64_t* next, uint64_t now, int* rep) {
+    *rep = 0;
+    int step = (kDown & neg) ? -1 : (kDown & pos) ? +1 : 0;
+    if (step) { *dir_state = step; *next = now + REPEAT_DELAY_NS; return step; }
+    int held = (kHeld & neg) ? -1 : (kHeld & pos) ? +1 : 0;
+    if (!held) { *dir_state = 0; return 0; }
+    if (held != *dir_state) { *dir_state = held; *next = now + REPEAT_DELAY_NS; return 0; }
+    if (now >= *next) { *next = now + REPEAT_RATE_NS; *rep = 1; return held; }
+    return 0;
+}
+
 void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly) {
     (void)lx;
     (void)ly;
-    /* Hold-to-repeat state for Up/Down navigation: first repeat after ~350 ms,
-       then every ~90 ms. Repeats apply to navigation only, never to Confirm. */
-    static uint64_t s_repeat_next = 0;
-    static int s_repeat_dir = 0;
+    static uint64_t s_vnext = 0, s_hnext = 0;
+    static int s_vdir = 0, s_hdir = 0;
     if (!g_open) {
-        s_repeat_dir = 0;
+        s_vdir = s_hdir = 0;
         return;
     }
 
     if (kDown & back_btn()) {
         g_open = 0;
+        apply_pending_clocks();
+        s_armed_row = -1;
         vlog("options_menu: closed by back button\n");
         return;
     }
 
-    if (kDown & (HidNpadButton_L | HidNpadButton_ZL)) {
-        g_tab = (g_tab + NUM_TABS - 1) % NUM_TABS;
-        g_row = view_first_selectable(g_tab);
-    }
-    if (kDown & (HidNpadButton_R | HidNpadButton_ZR)) {
-        g_tab = (g_tab + 1) % NUM_TABS;
-        g_row = view_first_selectable(g_tab);
-    }
+    /* Repeat state never crosses a tab switch: holding Down while pressing
+       R must not keep scrolling the new tab. */
+    if (kDown & (HidNpadButton_L | HidNpadButton_ZL)) { change_tab(-1); s_vdir = s_hdir = 0; }
+    if (kDown & (HidNpadButton_R | HidNpadButton_ZR)) { change_tab(+1); s_vdir = s_hdir = 0; }
 
-    /* Up/Down: tap steps immediately; holding repeats after a delay. */
-    uint64_t now_ns = armTicksToNs(armGetSystemTick());
-    int step = 0;
-    if (kDown & (HidNpadButton_Up | HidNpadButton_StickLUp)) step = -1;
-    else if (kDown & (HidNpadButton_Down | HidNpadButton_StickLDown)) step = +1;
-    if (step != 0) {
-        s_repeat_dir = step;
-        s_repeat_next = now_ns + 350000000ull;
-        view_move(step);
-    } else {
-        int held_dir = 0;
-        if (kHeld & (HidNpadButton_Up | HidNpadButton_StickLUp)) held_dir = -1;
-        else if (kHeld & (HidNpadButton_Down | HidNpadButton_StickLDown)) held_dir = +1;
-        if (held_dir == 0) {
-            s_repeat_dir = 0;
-        } else if (held_dir != s_repeat_dir) {
-            s_repeat_dir = held_dir;
-            s_repeat_next = now_ns + 350000000ull;
-        } else if (now_ns >= s_repeat_next) {
-            view_move(held_dir);
-            s_repeat_next = now_ns + 90000000ull;
-        }
-    }
+    uint64_t now = now_ns();
+    int rep = 0;
+    int vstep = repeat_axis(kDown, kHeld, BTN_UP, BTN_DOWN, &s_vdir, &s_vnext, now, &rep);
+    if (vstep) { view_move(vstep, !rep); s_armed_row = -1; }
 
     /* g_row is a view position; midx is the model index it points at.
        All row actions compare the model index, never the view position. */
     int midx = s_tab_views[g_tab][g_row];
     MenuRow* r = &s_tab_rows[g_tab][midx];
-    if (kDown & (HidNpadButton_Left | HidNpadButton_StickLLeft)) {
-        if (r->num_opts > 1) {
-            r->cur = (r->cur + r->num_opts - 1) % r->num_opts;
-            if (g_tab == TAB_PERF && midx == 4) options_apply_gpu_profile(r->cur);
-            if (g_tab == TAB_PERF && midx == 5) options_apply_cpu_clock(r->cur);
+
+    int hstep = repeat_axis(kDown, kHeld, BTN_LEFT, BTN_RIGHT, &s_hdir, &s_hnext, now, &rep);
+    if (hstep) change_value(r, midx, hstep);
+    if (!(kHeld & (BTN_LEFT | BTN_RIGHT))) apply_pending_clocks();
+
+    /* Actions fire on Confirm only. D-pad Right / stick-right used to fire
+       them too, so a tilt (or stick drift) on Quit Game exited at once. */
+    if (!(kDown & confirm_btn())) return;
+    int row_key = g_tab * 64 + midx;
+    if (g_tab == TAB_SYSTEM && midx == 0) {
+        save_settings();
+        set_status("Settings saved to SD (settings.ini & resolution.txt)", 4000);
+    } else if (g_tab == TAB_SYSTEM && (midx == 1 || midx == 2)) {
+        if (s_armed_row != row_key || now > s_armed_until) {
+            s_armed_row = row_key;
+            s_armed_until = now + 2000000000ull;
+            snprintf(s_arm_msg, sizeof s_arm_msg, "Press %c again to %s",
+                     confirm_letter(), midx == 1 ? "reset all settings" : "quit the game");
+            set_status(s_arm_msg, 2000);
+            return;
         }
-    }
-    if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | confirm_btn())) {
-        if (g_tab == TAB_SYSTEM && midx == 0) {
-            save_settings();
-            s_status_msg = "Settings saved to SD (settings.ini & resolution.txt)";
-            s_status_timer = 120;
-        } else if (g_tab == TAB_SYSTEM && midx == 1) {
+        s_armed_row = -1;
+        if (midx == 1) {
             remove(USM_DIR "settings.ini");
             remove(USM_DIR "registry.txt");
             remove(USM_DIR "resolution.txt");
+            /* Deletes on a journaled save:/ are only durable once committed. */
+            fsdevCommitDevice("save");
             reset_defaults();
+            s_pending_gpu = s_pending_cpu = 0;
             options_apply_gpu_profile(s_perf_rows[4].cur);
             options_apply_cpu_clock(s_perf_rows[5].cur);
-            s_status_msg = "All settings reset - restart the game for guest settings to take effect";
-            s_status_timer = 120;
-        } else if (g_tab == TAB_SYSTEM && midx == 2) {
+            set_status("All settings reset - restart the game for guest settings to take effect", 4000);
+        } else {
             vlog("options_menu: Quit Game confirmed by user -> exiting to Horizon OS\n");
             options_menu_cleanup();
             svcExitProcess();
-        } else if (g_tab == TAB_DEBUG && midx == 2) {
-            /* Test prompts: one-shot sample line with live Switch button names.
-               Word forms only — the overlay renderer draws its Aileron atlas,
-               not the game's Kenney glyphs; the real icons are verified by the
-               in-game tutorials themselves. */
-            snprintf(s_test_line, sizeof s_test_line,
-                     "PRESS %c TO JUMP - Y TO PUNCH - X TO KICK", confirm_letter());
-            s_status_msg = s_test_line;
-            s_status_timer = 300;
-        } else if (r->num_opts > 1) {
-            r->cur = (r->cur + 1) % r->num_opts;
-            if (g_tab == TAB_PERF && midx == 4) options_apply_gpu_profile(r->cur);
-            if (g_tab == TAB_PERF && midx == 5) options_apply_cpu_clock(r->cur);
         }
+    } else if (g_tab == TAB_DEBUG && midx == 2) {
+        /* Test prompts: one-shot sample line with live Switch button names. */
+        snprintf(s_test_line, sizeof s_test_line,
+                 "PRESS %c TO JUMP - Y TO PUNCH - X TO KICK", confirm_letter());
+        set_status(s_test_line, 10000);
+    } else {
+        change_value(r, midx, +1);
+        apply_pending_clocks();  /* a Confirm step is a single press: apply now */
     }
 }
 
@@ -625,7 +698,11 @@ static void init_gui_gl(void) {
     int cx = 0, cy = 0;
     for (int i = 0; i < 95; i++) {
         int w = menu_font_w[i];
-        if (cx + w >= 256) { cx = 0; cy += MENU_FONT_H; }
+        /* 1 px transparent gutter right of and below every glyph: with
+           GL_LINEAR at non-integer scales, edge texels blend with their
+           neighbour, and packed edge to edge that neighbour is the next
+           glyph (faint slivers beside letters). */
+        if (cx + w + 1 > 256) { cx = 0; cy += MENU_FONT_H + 1; }
         s_char_u0[i] = (float)cx / 256.0f;
         s_char_v0[i] = (float)cy / 256.0f;
         s_char_u1[i] = (float)(cx + w) / 256.0f;
@@ -638,7 +715,7 @@ static void init_gui_gl(void) {
                 atlas[(cy + row) * 256 + (cx + col)] = ((uint32_t)a << 24) | 0x00FFFFFFu;
             }
         }
-        cx += w;
+        cx += w + 1;
     }
 
     glGenTextures(1, &s_font_tex);
@@ -735,22 +812,68 @@ static void draw_rect(float x, float y, float w, float h, float r, float g, floa
     add_quad(x, y, x + w, y + h, 0, 0, 1, 1, r, g, b, a);
 }
 
-static void draw_text(float x, float y, float scale, const char* str, float r, float g, float b, float a) {
+/* Fake italic: the top verts shift +shear in x, the bottom verts stay, so the
+   glyph leans right. Advance widths are unchanged, so text_width() still
+   matches. shear 0 is upright text. */
+static void draw_text_shear(float x, float y, float scale, const char* str,
+                            float r, float g, float b, float a, float shear) {
     if (!str) return;
     float cur_x = x;
+    float gh = (float)MENU_FONT_H * scale;
     while (*str) {
         unsigned char c = (unsigned char)*str++;
         if (c < 32 || c > 126) c = 32;
         int idx = c - 32;
-        int w = menu_font_w[idx];
-        float gw = (float)w * scale;
-        float gh = (float)MENU_FONT_H * scale;
-
-        add_quad(cur_x, y, cur_x + gw, y + gh,
-                 s_char_u0[idx], s_char_v0[idx], s_char_u1[idx], s_char_v1[idx],
-                 r, g, b, a);
+        float gw = (float)menu_font_w[idx] * scale;
+        if (s_vert_count + 6 <= 4096) {
+            MenuVert* v = &s_verts[s_vert_count];
+            float u0 = s_char_u0[idx], v0 = s_char_v0[idx], u1 = s_char_u1[idx], v1 = s_char_v1[idx];
+            float x0 = cur_x, x1 = cur_x + gw, y0 = y, y1 = y + gh;
+            v[0] = (MenuVert){x0 + shear, y0, u0, v0, r, g, b, a};
+            v[1] = (MenuVert){x1 + shear, y0, u1, v0, r, g, b, a};
+            v[2] = (MenuVert){x0, y1, u0, v1, r, g, b, a};
+            v[3] = (MenuVert){x1 + shear, y0, u1, v0, r, g, b, a};
+            v[4] = (MenuVert){x1, y1, u1, v1, r, g, b, a};
+            v[5] = (MenuVert){x0, y1, u0, v1, r, g, b, a};
+            s_vert_count += 6;
+        }
         cur_x += gw + 1.0f * scale;
     }
+}
+
+static void draw_text(float x, float y, float scale, const char* str, float r, float g, float b, float a) {
+    draw_text_shear(x, y, scale, str, r, g, b, a, 0.0f);
+}
+
+/* Visible width of a string at a scale, matching draw_text's advance (glyph
+   width + 1 px per char, no trailing gap). */
+static float text_width(const char* str, float scale) {
+    if (!str) return 0.0f;
+    float w = 0.0f;
+    while (*str) {
+        unsigned char c = (unsigned char)*str++;
+        if (c < 32 || c > 126) c = 32;
+        w += (float)menu_font_w[c - 32] * scale + 1.0f * scale;
+    }
+    if (w > 0.0f) w -= 1.0f * scale;
+    return w;
+}
+
+/* The game's italic: ~6 degrees, i.e. +3 px over a 28 px cell at scale 1.0
+   (sampled from the game's menus). */
+#define ITALIC_SHEAR 3.0f
+
+/* Headers and tab titles: italic plus a 1 px black outline (four offset
+   passes under the colour pass). Rows stay single-pass: a 5-pass outline on
+   every visible row would blow the 4096-vert budget. */
+static void draw_text_title(float x, float y, float scale, const char* str,
+                            float r, float g, float b, float a) {
+    float shear = ITALIC_SHEAR * scale;
+    draw_text_shear(x - 1.0f, y, scale, str, 0.0f, 0.0f, 0.0f, a, shear);
+    draw_text_shear(x + 1.0f, y, scale, str, 0.0f, 0.0f, 0.0f, a, shear);
+    draw_text_shear(x, y - 1.0f, scale, str, 0.0f, 0.0f, 0.0f, a, shear);
+    draw_text_shear(x, y + 1.0f, scale, str, 0.0f, 0.0f, 0.0f, a, shear);
+    draw_text_shear(x, y, scale, str, r, g, b, a, shear);
 }
 
 static void cleanup_gui_gl_state(void) {
@@ -761,15 +884,44 @@ static void cleanup_gui_gl_state(void) {
     gl_bind_main_vao();
 }
 
+/* ---- Overlay look (720p geometry; colours sampled from the game's menus) ---- */
+#define COL_MAROON   0.388f, 0.082f, 0.082f  /* #631515: banners, tab bar, highlight, footer bar */
+#define COL_YELLOW   0.84f, 0.76f, 0.26f     /* #D6C242: active row, headers, active tab */
+#define COL_ORANGE   0.776f, 0.467f, 0.243f  /* #C6773E: active value */
+#define COL_ORANGE_D 0.702f, 0.416f, 0.216f  /* #B36A37: inactive value */
+#define COL_PANEL    0.06f, 0.09f, 0.06f     /* opaque: the game frame must not bleed through */
+
+/* Row pitch is the one layout constant: everything below derives from it.
+   48 px gives the 1.1x italic active row room to breathe; 42 px also works
+   (11 rows visible instead of 10). */
+#define ROW_PITCH      48.0f
+#define ROW_GAP         6.0f                       /* between highlight rects */
+#define ROW_RECT_H     (ROW_PITCH - ROW_GAP)
+#define ROW_ZONE_TOP  111.0f
+#define ROW_ZONE_BOT  591.0f                       /* 9 px above the help box */
+#define MAX_VIS       ((int)((ROW_ZONE_BOT - ROW_ZONE_TOP) / ROW_PITCH))
+#define ROW_SCALE      0.95f
+#define ACTIVE_SCALE   1.1f
+#define HEADER_SCALE   1.25f
+#define TAB_SCALE      1.25f
+#define HELP_Y        600.0f
+#define HELP_H         56.0f
+#define FOOTER_H       28.0f
+#define VALUE_RIGHT    90.0f                       /* value right edge = screen_w - this */
+
+/* y that vertically centres a text cell of scale s in a box at top, height h */
+static float centre_y(float top, float h, float s) { return top + (h - (float)MENU_FONT_H * s) * 0.5f; }
+
+static float s_fps = 30.0f;  /* presented frames per second, for the counter and the Debug rows */
+
 void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     static uint64_t last_time = 0;
-    static float fps = 30.0f;
     static int frames = 0;
-    uint64_t now = armTicksToNs(armGetSystemTick()) / 1000ull;
+    uint64_t now = now_ns() / 1000ull;
     frames++;
     if (!last_time) last_time = now;
     if (now - last_time >= 500000ull) {
-        fps = (float)frames * 1000000.0f / (float)(now - last_time);
+        s_fps = (float)frames * 1000000.0f / (float)(now - last_time);
         frames = 0;
         last_time = now;
     }
@@ -804,7 +956,7 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     /* FPS Counter overlay if enabled */
     if (options_show_fps() && !g_open) {
         char fps_str[32];
-        snprintf(fps_str, sizeof fps_str, "%.1f FPS", fps);
+        snprintf(fps_str, sizeof fps_str, "%.1f FPS", s_fps);
         draw_rect(screen_w - 140.0f, 16.0f, 124.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
         flush_verts(0);
         draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
@@ -818,66 +970,82 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         return;
     }
 
-    /* Solid shapes pass (mode = 0) */
-    /* USM comic palette: dark green-tinted backdrop, red section banners,
-       orange titles, green active-row highlight. */
-    draw_rect(60.0f, 40.0f, screen_w - 120.0f, screen_h - 80.0f, 0.06f, 0.09f, 0.06f, 0.94f);
+    const float sw = (float)screen_w, sh = (float)screen_h;
+    const float row_w = sw - 150.0f;
+    const float panel_bot = sh - 20.0f;
 
-    /* Tab header bar */
-    draw_rect(60.0f, 40.0f, screen_w - 120.0f, 54.0f, 0.09f, 0.13f, 0.22f, 0.98f);
-
-    /* Active tab highlight */
-    float tab_spacing = (screen_w - 160.0f) / NUM_TABS;
-    float tab_x = 80.0f + g_tab * tab_spacing;
-    draw_rect(tab_x - 6.0f, 44.0f, tab_spacing - 8.0f, 46.0f, 0.78f, 0.08f, 0.10f, 0.95f);
-
-    /* Active row highlight with vertical scrolling (g_row is a view position) */
+    /* Scroll window over the view (g_row is a view position). */
     int count = s_tab_view_counts[g_tab];
-    int max_vis = 11;
+    int max_vis = MAX_VIS;
     int scroll_top = (g_row >= max_vis) ? (g_row - max_vis + 1) : 0;
     int end_vis = scroll_top + max_vis;
     if (end_vis > count) end_vis = count;
-
-    float row_y = 120.0f + (g_row - scroll_top) * 42.0f;
-    draw_rect(75.0f, row_y - 4.0f, screen_w - 150.0f, 38.0f, 0.12f, 0.55f, 0.22f, 0.65f);
-
-    /* Bottom help box */
-    draw_rect(75.0f, screen_h - 110.0f, screen_w - 150.0f, 55.0f, 0.06f, 0.10f, 0.07f, 0.88f);
-    flush_verts(0);
-
-    /* Text pass (mode = 1) */
-    /* Draw tab titles */
-    for (int t = 0; t < NUM_TABS; t++) {
-        float tx = 80.0f + t * tab_spacing;
-        if (t == g_tab) {
-            draw_text(tx, 56.0f, 1.0f, kTabNames[t], 1.0f, 0.62f, 0.10f, 1.0f);
-        } else {
-            draw_text(tx, 56.0f, 1.0f, kTabNames[t], 0.6f, 0.65f, 0.75f, 0.8f);
-        }
+    /* Insurance only (no live case under this scroll rule): never let the
+       window end on a section header with its rows cut off below. */
+    while (end_vis < count && end_vis > scroll_top + 1 && s_tab_views[g_tab][end_vis - 1] < 0 && scroll_top < g_row) {
+        scroll_top++;
+        end_vis = scroll_top + max_vis;
+        if (end_vis > count) end_vis = count;
     }
 
-    /* Draw visible rows in the current tab (view positions; headers are banners) */
+    /* Tab layout: each title centred in its slot, shrunk if a slot is tight. */
+    float tab_spacing = (sw - 160.0f) / NUM_TABS;
+    float tab_scale[NUM_TABS], tab_tx[NUM_TABS];
+    for (int t = 0; t < NUM_TABS; t++) {
+        float s = TAB_SCALE;
+        float w = text_width(kTabNames[t], s);
+        if (w > tab_spacing - 12.0f) { s *= (tab_spacing - 12.0f) / w; w = text_width(kTabNames[t], s); }
+        tab_scale[t] = s;
+        tab_tx[t] = 80.0f + t * tab_spacing + (tab_spacing - w) * 0.5f;
+    }
+
+    /* ---- Solid shapes pass (mode 0). Every rect that is not a section
+       banner is queued here, before any text: the vertex buffer is shared
+       and a mode-0 flush would draw pending glyph quads as solid bars. ---- */
+    draw_rect(60.0f, 40.0f, sw - 120.0f, panel_bot - 40.0f, COL_PANEL, 1.0f);
+    draw_rect(60.0f, 40.0f, sw - 120.0f, 54.0f, COL_MAROON, 1.0f);                     /* tab bar */
+    draw_rect(tab_tx[g_tab], 86.0f, text_width(kTabNames[g_tab], tab_scale[g_tab]), 3.0f, COL_YELLOW, 1.0f);
+    float hl_top = ROW_ZONE_TOP + (g_row - scroll_top) * ROW_PITCH;
+    draw_rect(75.0f, hl_top, row_w, ROW_RECT_H, COL_MAROON, 1.0f);                     /* active row */
+    if (count > max_vis) {                                                             /* scrollbar */
+        float track_h = max_vis * ROW_PITCH - ROW_GAP;
+        float thumb_h = track_h * max_vis / count;
+        float thumb_y = ROW_ZONE_TOP + scroll_top * (track_h - thumb_h) / (count - max_vis);
+        draw_rect(1208.0f, ROW_ZONE_TOP, 4.0f, track_h, 0.25f, 0.25f, 0.25f, 1.0f);
+        draw_rect(1208.0f, thumb_y, 4.0f, thumb_h, COL_YELLOW, 1.0f);
+    }
+    draw_rect(75.0f, HELP_Y, row_w, HELP_H, 0.06f, 0.10f, 0.07f, 1.0f);              /* help box */
+    draw_rect(60.0f, panel_bot - FOOTER_H, sw - 120.0f, FOOTER_H, COL_MAROON, 1.0f);   /* footer bar */
+    flush_verts(0);
+
+    /* ---- Text pass (mode 1) ---- */
+    for (int t = 0; t < NUM_TABS; t++) {
+        float ty = centre_y(40.0f, 46.0f, tab_scale[t]);
+        if (t == g_tab) draw_text_title(tab_tx[t], ty, tab_scale[t], kTabNames[t], COL_YELLOW, 1.0f);
+        else            draw_text_title(tab_tx[t], ty, tab_scale[t], kTabNames[t], 1.0f, 1.0f, 1.0f, 0.9f);
+    }
+
     MenuRow* rows = s_tab_rows[g_tab];
     const int8_t* view = s_tab_views[g_tab];
     for (int r = scroll_top; r < end_vis; r++) {
-        float ry = 124.0f + (r - scroll_top) * 42.0f;
+        float top = ROW_ZONE_TOP + (r - scroll_top) * ROW_PITCH;
         int entry = view[r];
         if (entry < 0) {
-            /* Section header: full-width red banner, white title, no value. */
-            /* Flush pending text (mode 1) BEFORE adding the banner rect: the
-               vertex buffer is shared, and a mode-0 flush would draw every
-               glyph quad queued since the last flush as a solid bar. */
+            /* Section header: maroon banner, yellow italic title. Flush
+               pending text (mode 1) BEFORE the banner rect -- see above. */
             flush_verts(1);
-            draw_rect(75.0f, ry - 4.0f, screen_w - 150.0f, 38.0f, 0.78f, 0.08f, 0.10f, 0.95f);
+            draw_rect(75.0f, top, row_w, ROW_RECT_H, COL_MAROON, 1.0f);
             flush_verts(0);
-            draw_text(90.0f, ry, 0.95f, header_name(entry), 1.0f, 1.0f, 1.0f, 1.0f);
+            draw_text_title(90.0f, centre_y(top, ROW_RECT_H, HEADER_SCALE), HEADER_SCALE,
+                            header_name(entry), COL_YELLOW, 1.0f);
             flush_verts(1);
             continue;
         }
         int active = (r == g_row);
-        float cr = active ? 1.0f : 0.82f;
-        float cg = active ? 1.0f : 0.85f;
-        float cb = active ? 1.0f : 0.90f;
+        /* The game's selected row is yellow, larger and italic. */
+        float scale = active ? ACTIVE_SCALE : ROW_SCALE;
+        float shear = active ? ITALIC_SHEAR * scale : 0.0f;
+        float ty = centre_y(top, ROW_RECT_H, scale);
 
         /* Controller Map row names are built live (map_name) so they flip
            under Swap exactly like their values (map_label) do. */
@@ -887,15 +1055,36 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
             map_name(entry - 2, name_buf, sizeof name_buf);
             name_str = name_buf;
         }
-        draw_text(90.0f, ry, 0.95f, name_str, cr, cg, cb, 1.0f);
+        if (active) draw_text_shear(90.0f, ty, scale, name_str, COL_YELLOW, 1.0f, shear);
+        else        draw_text_shear(90.0f, ty, scale, name_str, 0.82f, 0.85f, 0.90f, 1.0f, 0.0f);
 
-        /* Value / choice: System rows and the Controller Map are built live
-           from the current buttons so Swap is always reflected. */
-        char val_buf[64];
+        /* Values built live: System actions and SESSION, the Controller Map,
+           the Debug RUNTIME rows; everything else from the model. */
+        char val_buf[80];
         const char* val_str = NULL;
-        if (g_tab == TAB_SYSTEM) {
+        if (g_tab == TAB_SYSTEM && entry <= 2) {
             const char* verb = (entry == 0) ? "Save" : (entry == 1) ? "Reset" : "Exit";
             snprintf(val_buf, sizeof val_buf, "[ Press %c to %s ]", confirm_letter(), verb);
+            val_str = val_buf;
+        } else if (g_tab == TAB_SYSTEM && entry == 3) {
+#ifdef USM_BUILD_SHA
+            snprintf(val_buf, sizeof val_buf, "%s (%s)", USM_BUILD_SHA, USM_BUILD_BRANCH);
+#else
+            snprintf(val_buf, sizeof val_buf, "%s %s", __DATE__, __TIME__);
+#endif
+            val_str = val_buf;
+        } else if (g_tab == TAB_SYSTEM && entry == 4) {
+            /* Selected profiles (settings, not a hardware readback). */
+            int ci = s_perf_rows[5].cur, gi = s_perf_rows[4].cur;
+            if (ci < 0 || ci >= s_perf_rows[5].num_opts) ci = 0;
+            if (gi < 0 || gi >= s_perf_rows[4].num_opts) gi = 0;
+            snprintf(val_buf, sizeof val_buf, "%s / %s", s_perf_rows[5].opts[ci], s_perf_rows[4].opts[gi]);
+            val_str = val_buf;
+        } else if (g_tab == TAB_DEBUG && entry == 3) {
+            snprintf(val_buf, sizeof val_buf, "%.1f", s_fps);
+            val_str = val_buf;
+        } else if (g_tab == TAB_DEBUG && entry == 4) {
+            snprintf(val_buf, sizeof val_buf, "%.1f ms", s_fps > 0.1f ? 1000.0f / s_fps : 0.0f);
             val_str = val_buf;
         } else if (g_tab == TAB_CONTROLS && entry >= 3 && entry <= 12) {
             map_label(entry - 2, val_buf, sizeof val_buf);
@@ -903,49 +1092,40 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         } else {
             int cur_val = rows[entry].cur;
             if (cur_val >= 0 && cur_val < rows[entry].num_opts) {
-                if (rows[entry].num_opts > 1) {
-                    snprintf(val_buf, sizeof val_buf, "<  %s  >", rows[entry].opts[cur_val]);
-                } else {
-                    snprintf(val_buf, sizeof val_buf, "%s", rows[entry].opts[cur_val]);
-                }
+                if (rows[entry].num_opts > 1) snprintf(val_buf, sizeof val_buf, "<  %s  >", rows[entry].opts[cur_val]);
+                else                          snprintf(val_buf, sizeof val_buf, "%s", rows[entry].opts[cur_val]);
                 val_str = val_buf;
             }
         }
         if (val_str) {
-            float vr = active ? 0.35f : 0.70f;
-            float vg = active ? 0.85f : 0.75f;
-            float vb = active ? 1.00f : 0.85f;
-            draw_text(screen_w - 480.0f, ry, 0.95f, val_str, vr, vg, vb, 1.0f);
+            /* Right-aligned at the panel's right inset, like the game. */
+            float vx = sw - VALUE_RIGHT - text_width(val_str, scale);
+            if (active) draw_text_shear(vx, ty, scale, val_str, COL_ORANGE, 1.0f, shear);
+            else        draw_text_shear(vx, ty, scale, val_str, COL_ORANGE_D, 1.0f, 0.0f);
         }
     }
 
-    /* Scroll indicators if needed */
-    if (scroll_top > 0) {
-        draw_text(screen_w / 2 - 20.0f, 105.0f, 0.8f, "^ More ^", 0.5f, 0.8f, 1.0f, 0.7f);
-    }
-    if (end_vis < count) {
-        draw_text(screen_w / 2 - 20.0f, 120.0f + max_vis * 42.0f, 0.8f, "v More v", 0.5f, 0.8f, 1.0f, 0.7f);
-    }
-
-    /* Help text (model row the selected view entry points at) */
-    int help_entry = view[g_row];
-    if (help_entry >= 0 && rows[help_entry].help) {
-        draw_text(90.0f, screen_h - 96.0f, 0.85f, rows[help_entry].help, 0.85f, 0.90f, 0.95f, 0.95f);
+    /* Help line: the status message (save result, two-press prompt, Test
+       prompts sample) replaces the help text while it is showing. */
+    float help_y = centre_y(HELP_Y, HELP_H, 0.85f);
+    if (s_status_msg && now_ns() < s_status_until) {
+        draw_text(90.0f, help_y, 0.85f, s_status_msg, 0.3f, 1.0f, 0.4f, 1.0f);
+    } else {
+        int help_entry = view[g_row];
+        if (help_entry >= 0 && rows[help_entry].help)
+            draw_text(90.0f, help_y, 0.85f, rows[help_entry].help, 0.85f, 0.90f, 0.95f, 1.0f);
     }
 
-    /* Status message */
-    if (s_status_timer > 0 && s_status_msg) {
-        s_status_timer--;
-        draw_text(screen_w - 460.0f, screen_h - 70.0f, 0.85f, s_status_msg, 0.3f, 1.0f, 0.4f, 1.0f);
-    }
-
-    /* Controller guide footer, built live from the Confirm/Back buttons. */
+    /* Footer on the maroon bar, built live from the Confirm/Back buttons;
+       shrinks rather than run off the panel. */
     {
         char footer_buf[160];
         snprintf(footer_buf, sizeof footer_buf,
                  "L/R: Switch Tabs  |  D-Pad/Stick: Navigate  |  Left/Right, %c: Change Value  |  %c: Close Menu",
                  confirm_letter(), back_letter());
-        draw_text(90.0f, screen_h - 30.0f, 0.75f, footer_buf, 0.55f, 0.60f, 0.70f, 0.9f);
+        float fs = 0.8f, avail = sw - 180.0f, fw = text_width(footer_buf, fs);
+        if (fw > avail) fs *= avail / fw;
+        draw_text(90.0f, centre_y(panel_bot - FOOTER_H, FOOTER_H, fs), fs, footer_buf, 1.0f, 1.0f, 1.0f, 1.0f);
     }
 
     flush_verts(1);
